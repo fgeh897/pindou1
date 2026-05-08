@@ -1,0 +1,5708 @@
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function hexToRgb(hex) {
+  const sanitized = hex.replace("#", "").trim();
+  if (sanitized.length !== 6) {
+    return [0, 0, 0];
+  }
+
+  return [
+    Number.parseInt(sanitized.slice(0, 2), 16),
+    Number.parseInt(sanitized.slice(2, 4), 16),
+    Number.parseInt(sanitized.slice(4, 6), 16),
+  ];
+}
+
+function rgbToHex(rgb) {
+  return `#${rgb.map((value) => clamp(value, 0, 255).toString(16).padStart(2, "0")).join("")}`;
+}
+
+function parseRgbText(input) {
+  const values = input
+    .split(",")
+    .map((part) => Number.parseInt(part.trim(), 10))
+    .filter((value) => Number.isFinite(value));
+
+  if (values.length !== 3) {
+    return null;
+  }
+
+  return values.map((value) => clamp(value, 0, 255));
+}
+
+function formatRgb(rgb) {
+  return rgb.join(",");
+}
+
+function getRgbDistance(sourceRgb, targetRgb) {
+  const [sr, sg, sb] = sourceRgb;
+  const [tr, tg, tb] = targetRgb;
+  return Math.sqrt((sr - tr) ** 2 + (sg - tg) ** 2 + (sb - tb) ** 2);
+}
+
+function srgbToLinear(value) {
+  const normalized = value / 255;
+  if (normalized <= 0.04045) {
+    return normalized / 12.92;
+  }
+  return ((normalized + 0.055) / 1.055) ** 2.4;
+}
+
+function rgbToXyz(rgb) {
+  const [r, g, b] = rgb.map(srgbToLinear);
+  return [
+    (r * 0.4124564 + g * 0.3575761 + b * 0.1804375) * 100,
+    (r * 0.2126729 + g * 0.7151522 + b * 0.072175) * 100,
+    (r * 0.0193339 + g * 0.119192 + b * 0.9503041) * 100,
+  ];
+}
+
+function xyzPivot(value) {
+  const delta = 6 / 29;
+  if (value > delta ** 3) {
+    return Math.cbrt(value);
+  }
+  return value / (3 * delta ** 2) + 4 / 29;
+}
+
+function rgbToLab(rgb) {
+  const [x, y, z] = rgbToXyz(rgb);
+  const refX = 95.047;
+  const refY = 100;
+  const refZ = 108.883;
+  const fx = xyzPivot(x / refX);
+  const fy = xyzPivot(y / refY);
+  const fz = xyzPivot(z / refZ);
+  return [
+    116 * fy - 16,
+    500 * (fx - fy),
+    200 * (fy - fz),
+  ];
+}
+
+function deltaE76(leftLab, rightLab) {
+  const [l1, a1, b1] = leftLab;
+  const [l2, a2, b2] = rightLab;
+  return Math.sqrt((l1 - l2) ** 2 + (a1 - a2) ** 2 + (b1 - b2) ** 2);
+}
+
+function deltaE2000(leftLab, rightLab) {
+  const [l1, a1, b1] = leftLab;
+  const [l2, a2, b2] = rightLab;
+  const avgLp = (l1 + l2) / 2;
+  const c1 = Math.sqrt(a1 ** 2 + b1 ** 2);
+  const c2 = Math.sqrt(a2 ** 2 + b2 ** 2);
+  const avgC = (c1 + c2) / 2;
+  const g = 0.5 * (1 - Math.sqrt((avgC ** 7) / (avgC ** 7 + 25 ** 7)));
+  const a1p = (1 + g) * a1;
+  const a2p = (1 + g) * a2;
+  const c1p = Math.sqrt(a1p ** 2 + b1 ** 2);
+  const c2p = Math.sqrt(a2p ** 2 + b2 ** 2);
+  const avgCp = (c1p + c2p) / 2;
+
+  const h1p = Math.atan2(b1, a1p) >= 0 ? Math.atan2(b1, a1p) : Math.atan2(b1, a1p) + 2 * Math.PI;
+  const h2p = Math.atan2(b2, a2p) >= 0 ? Math.atan2(b2, a2p) : Math.atan2(b2, a2p) + 2 * Math.PI;
+
+  const deltaLp = l2 - l1;
+  const deltaCp = c2p - c1p;
+
+  let deltaHp = 0;
+  if (c1p * c2p !== 0) {
+    if (Math.abs(h2p - h1p) <= Math.PI) {
+      deltaHp = h2p - h1p;
+    } else if (h2p <= h1p) {
+      deltaHp = h2p - h1p + 2 * Math.PI;
+    } else {
+      deltaHp = h2p - h1p - 2 * Math.PI;
+    }
+  }
+
+  const deltaBigHp = 2 * Math.sqrt(c1p * c2p) * Math.sin(deltaHp / 2);
+
+  let avgHp = h1p + h2p;
+  if (c1p * c2p === 0) {
+    avgHp = h1p + h2p;
+  } else if (Math.abs(h1p - h2p) > Math.PI) {
+    avgHp = (h1p + h2p + 2 * Math.PI) / 2;
+  } else {
+    avgHp = (h1p + h2p) / 2;
+  }
+
+  const t =
+    1 -
+    0.17 * Math.cos(avgHp - Math.PI / 6) +
+    0.24 * Math.cos(2 * avgHp) +
+    0.32 * Math.cos(3 * avgHp + Math.PI / 30) -
+    0.2 * Math.cos(4 * avgHp - (63 * Math.PI) / 180);
+
+  const deltaTheta = ((30 * Math.PI) / 180) * Math.exp(-((((avgHp * 180) / Math.PI - 275) / 25) ** 2));
+  const rc = 2 * Math.sqrt((avgCp ** 7) / (avgCp ** 7 + 25 ** 7));
+  const sl = 1 + (0.015 * (avgLp - 50) ** 2) / Math.sqrt(20 + (avgLp - 50) ** 2);
+  const sc = 1 + 0.045 * avgCp;
+  const sh = 1 + 0.015 * avgCp * t;
+  const rt = -Math.sin(2 * deltaTheta) * rc;
+
+  return Math.sqrt(
+    (deltaLp / sl) ** 2 +
+      (deltaCp / sc) ** 2 +
+      (deltaBigHp / sh) ** 2 +
+      rt * (deltaCp / sc) * (deltaBigHp / sh),
+  );
+}
+
+function getPerceptualDistance(sourceRgb, targetRgb) {
+  return deltaE2000(rgbToLab(sourceRgb), rgbToLab(targetRgb));
+}
+
+function matchNearestColor(sampleRgb, palette) {
+  if (!palette.length) {
+    return null;
+  }
+
+  let bestMatch = null;
+  const sampleLab = rgbToLab(sampleRgb);
+
+  for (const entry of palette) {
+    const entryLab = entry.lab || rgbToLab(entry.rgb);
+    if (!entry.lab) {
+      entry.lab = entryLab;
+    }
+    const distance = deltaE2000(sampleLab, entryLab);
+    if (!bestMatch || distance < bestMatch.distance) {
+      bestMatch = {
+        code: entry.code,
+        rgb: entry.rgb,
+        lab: entryLab,
+        distance,
+      };
+    }
+  }
+
+  return bestMatch;
+}
+
+function getReadableTextColor(rgb) {
+  const luminance = (0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]) / 255;
+  return luminance > 0.62 ? "#1e1712" : "#fff9f0";
+}
+
+const initialState = {
+  image: {
+    element: null,
+    width: 0,
+    height: 0,
+  },
+  originalCanvas: null,
+  crop: null,
+  cropDisplay: null,
+  cropConfirmed: false,
+  gridSize: {
+    width: 40,
+    height: 40,
+  },
+  gridAlignment: {
+    offsetX: 0,
+    offsetY: 0,
+    cellWidthScale: 1,
+    cellHeightScale: 1,
+  },
+  sampling: {
+    mode: "ring",
+    outerMarginRatio: 0.1,
+    innerExclusionRatio: 0.24,
+    offsetXRatio: 0,
+    offsetYRatio: 0,
+    anchorXRatio: 0.18,
+    anchorYRatio: 0.18,
+    patchRadius: 1,
+  },
+  recognition: {
+    watermarkTextAssist: false,
+    excludeOuterLayers: 0,
+  },
+  showSamplingOverlay: true,
+  palette: [],
+  paletteSetName: "当前项目色卡",
+  paletteImportMode: "replace",
+  paletteReviewMode: "color-first",
+  pickerMode: false,
+  analysis: null,
+  currentChunkIndex: 0,
+  strategyType: "color-fill",
+  focusColorCode: "",
+  markerPreset: "lime",
+  selectedPreviewCell: {
+    x: 1,
+    y: 1,
+  },
+  sampleInspectWindow: 3,
+  manualOverrides: {},
+  seedAssist: {
+    targetCode: "",
+    contrastCode: "",
+    threshold: 8,
+    targetSeeds: [],
+    contrastSeeds: [],
+    candidates: [],
+    targetPrototypeRgb: null,
+    contrastPrototypeRgb: null,
+  },
+};
+
+let state = structuredClone(initialState);
+const listeners = new Set();
+
+function notify() {
+  for (const listener of listeners) {
+    listener(state);
+  }
+}
+
+function getState() {
+  return state;
+}
+
+function setState(updater) {
+  const nextState = typeof updater === "function" ? updater(state) : updater;
+  state = nextState;
+  notify();
+}
+
+function patchState(partial) {
+  state = {
+    ...state,
+    ...partial,
+  };
+  notify();
+}
+
+function subscribe(listener) {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+function resetAnalysis() {
+  state = {
+    ...state,
+    analysis: null,
+    currentChunkIndex: 0,
+  };
+  notify();
+}
+
+const SAMPLE_OUTER_MARGIN_RATIO = 0.1;
+const SAMPLE_INNER_EXCLUSION_RATIO = 0.24;
+const SAMPLE_RING_OFFSETS = [
+  [0.18, "top"],
+  [0.36, "top"],
+  [0.5, "top"],
+  [0.64, "top"],
+  [0.82, "top"],
+  [0.18, "bottom"],
+  [0.36, "bottom"],
+  [0.5, "bottom"],
+  [0.64, "bottom"],
+  [0.82, "bottom"],
+  ["left", 0.34],
+  ["left", 0.5],
+  ["left", 0.66],
+  ["right", 0.34],
+  ["right", 0.5],
+  ["right", 0.66],
+];
+const TEXT_REGION_X_RATIO = 0.2;
+const TEXT_REGION_Y_RATIO = 0.18;
+const TEXT_REGION_WIDTH_RATIO = 0.6;
+const TEXT_REGION_HEIGHT_RATIO = 0.64;
+const TEXT_TEMPLATE_CACHE = new Map();
+
+function getPixelFromImageData(imageData, width, x, y) {
+  const px = clamp(Math.floor(x), 0, width - 1);
+  const py = clamp(Math.floor(y), 0, imageData.height - 1);
+  const index = (py * width + px) * 4;
+
+  return [
+    imageData.data[index],
+    imageData.data[index + 1],
+    imageData.data[index + 2],
+  ];
+}
+
+function getPatchAverageFromImageData(imageData, width, x, y, radius = 1) {
+  const pixels = [];
+  for (let offsetY = -radius; offsetY <= radius; offsetY += 1) {
+    for (let offsetX = -radius; offsetX <= radius; offsetX += 1) {
+      pixels.push(getPixelFromImageData(imageData, width, x + offsetX, y + offsetY));
+    }
+  }
+
+  return averageRgb(pixels);
+}
+
+function chunkCells(cells, gridWidth, gridHeight, chunkSize = 5) {
+  const chunks = [];
+  const chunkCols = Math.ceil(gridWidth / chunkSize);
+  const chunkRows = Math.ceil(gridHeight / chunkSize);
+
+  for (let chunkRow = 0; chunkRow < chunkRows; chunkRow += 1) {
+    for (let chunkCol = 0; chunkCol < chunkCols; chunkCol += 1) {
+      const startX = chunkCol * chunkSize + 1;
+      const endX = Math.min(gridWidth, startX + chunkSize - 1);
+      const startY = chunkRow * chunkSize + 1;
+      const endY = Math.min(gridHeight, startY + chunkSize - 1);
+      const chunkCellsList = [];
+
+      for (let y = startY; y <= endY; y += 1) {
+        for (let x = startX; x <= endX; x += 1) {
+          chunkCellsList.push(cells[(y - 1) * gridWidth + (x - 1)]);
+        }
+      }
+
+      chunks.push({
+        index: chunks.length,
+        chunkCol: chunkCol + 1,
+        chunkRow: chunkRow + 1,
+        startX,
+        endX,
+        startY,
+        endY,
+        width: endX - startX + 1,
+        height: endY - startY + 1,
+        cells: chunkCellsList,
+      });
+    }
+  }
+
+  return chunks;
+}
+
+function buildStats(cells) {
+  const counts = new Map();
+
+  for (const cell of cells) {
+    if (cell.excluded || cell.code === "EXCLUDED") {
+      continue;
+    }
+    counts.set(cell.code, (counts.get(cell.code) || 0) + 1);
+  }
+
+  return [...counts.entries()]
+    .map(([code, count]) => ({ code, count }))
+    .sort((left, right) => right.count - left.count || left.code.localeCompare(right.code));
+}
+
+function averageRgb(samples) {
+  const total = samples.reduce(
+    (accumulator, rgb) => {
+      accumulator[0] += rgb[0];
+      accumulator[1] += rgb[1];
+      accumulator[2] += rgb[2];
+      return accumulator;
+    },
+    [0, 0, 0],
+  );
+
+  return total.map((value) => Math.round(value / samples.length));
+}
+
+function medianRgb(samples) {
+  if (!samples.length) {
+    return [0, 0, 0];
+  }
+
+  return [0, 1, 2].map((channel) => {
+    const sorted = samples.map((rgb) => rgb[channel]).sort((left, right) => left - right);
+    const middle = Math.floor(sorted.length / 2);
+    if (sorted.length % 2 === 1) {
+      return sorted[middle];
+    }
+    return Math.round((sorted[middle - 1] + sorted[middle]) / 2);
+  });
+}
+
+function shouldExcludeCell(col, row, gridWidth, gridHeight, excludeOuterLayers = 0) {
+  if (!excludeOuterLayers) {
+    return false;
+  }
+  return (
+    col < excludeOuterLayers ||
+    row < excludeOuterLayers ||
+    col >= gridWidth - excludeOuterLayers ||
+    row >= gridHeight - excludeOuterLayers
+  );
+}
+
+function buildParserActiveBounds(mask, width, height) {
+  let minX = width;
+  let minY = height;
+  let maxX = -1;
+  let maxY = -1;
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      if (!mask[y * width + x]) {
+        continue;
+      }
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+    }
+  }
+
+  if (maxX < minX || maxY < minY) {
+    return null;
+  }
+
+  return {
+    x: minX,
+    y: minY,
+    width: maxX - minX + 1,
+    height: maxY - minY + 1,
+  };
+}
+
+function normalizeParserBinaryMask(mask, width, height, targetWidth = 72, targetHeight = 28) {
+  const bounds = buildParserActiveBounds(mask, width, height);
+  if (!bounds) {
+    return null;
+  }
+
+  const normalized = new Uint8Array(targetWidth * targetHeight);
+  for (let targetY = 0; targetY < targetHeight; targetY += 1) {
+    for (let targetX = 0; targetX < targetWidth; targetX += 1) {
+      const sourceX = bounds.x + ((targetX + 0.5) / targetWidth) * bounds.width;
+      const sourceY = bounds.y + ((targetY + 0.5) / targetHeight) * bounds.height;
+      const pixelX = clamp(Math.floor(sourceX), 0, width - 1);
+      const pixelY = clamp(Math.floor(sourceY), 0, height - 1);
+      normalized[targetY * targetWidth + targetX] = mask[pixelY * width + pixelX];
+    }
+  }
+
+  return {
+    width: targetWidth,
+    height: targetHeight,
+    data: normalized,
+  };
+}
+
+function renderParserCodeTemplateMask(code, fontFamily) {
+  const cacheKey = `${code}::${fontFamily}`;
+  if (TEXT_TEMPLATE_CACHE.has(cacheKey)) {
+    return TEXT_TEMPLATE_CACHE.get(cacheKey);
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = 220;
+  canvas.height = 90;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#111111";
+
+  let fontSize = 56;
+  for (; fontSize >= 22; fontSize -= 2) {
+    ctx.font = `900 ${fontSize}px ${fontFamily}`;
+    if (ctx.measureText(code).width <= canvas.width * 0.82) {
+      break;
+    }
+  }
+
+  ctx.font = `900 ${fontSize}px ${fontFamily}`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(code, canvas.width / 2, canvas.height / 2 + 2);
+
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const mask = new Uint8Array(canvas.width * canvas.height);
+  for (let index = 0; index < mask.length; index += 1) {
+    const pixelIndex = index * 4;
+    const brightness =
+      (imageData.data[pixelIndex] + imageData.data[pixelIndex + 1] + imageData.data[pixelIndex + 2]) / 3;
+    mask[index] = brightness < 180 ? 1 : 0;
+  }
+
+  const normalized = normalizeParserBinaryMask(mask, canvas.width, canvas.height);
+  TEXT_TEMPLATE_CACHE.set(cacheKey, normalized);
+  return normalized;
+}
+
+function compareParserBinaryMasks(left, right) {
+  let overlap = 0;
+  let union = 0;
+  let leftCount = 0;
+  let rightCount = 0;
+
+  for (let index = 0; index < left.data.length; index += 1) {
+    const leftValue = left.data[index];
+    const rightValue = right.data[index];
+    if (leftValue) {
+      leftCount += 1;
+    }
+    if (rightValue) {
+      rightCount += 1;
+    }
+    if (leftValue || rightValue) {
+      union += 1;
+    }
+    if (leftValue && rightValue) {
+      overlap += 1;
+    }
+  }
+
+  if (!union) {
+    return 0;
+  }
+
+  const densityPenalty = Math.abs(leftCount - rightCount) / Math.max(leftCount, rightCount, 1);
+  return overlap / union - densityPenalty * 0.18;
+}
+
+function getParserCellTextRect(cellStartX, cellStartY, cellWidth, cellHeight) {
+  return {
+    x: cellStartX + cellWidth * TEXT_REGION_X_RATIO,
+    y: cellStartY + cellHeight * TEXT_REGION_Y_RATIO,
+    width: Math.max(8, cellWidth * TEXT_REGION_WIDTH_RATIO),
+    height: Math.max(8, cellHeight * TEXT_REGION_HEIGHT_RATIO),
+  };
+}
+
+function buildParserCellTextMask(imageData, imageWidth, cellStartX, cellStartY, cellWidth, cellHeight, backgroundRgb) {
+  const roi = getParserCellTextRect(cellStartX, cellStartY, cellWidth, cellHeight);
+  const startX = clamp(Math.floor(roi.x), 0, imageWidth - 1);
+  const startY = clamp(Math.floor(roi.y), 0, imageData.height - 1);
+  const roiWidth = Math.max(4, Math.min(imageWidth - startX, Math.floor(roi.width)));
+  const roiHeight = Math.max(4, Math.min(imageData.height - startY, Math.floor(roi.height)));
+  const mask = new Uint8Array(roiWidth * roiHeight);
+
+  for (let y = 0; y < roiHeight; y += 1) {
+    for (let x = 0; x < roiWidth; x += 1) {
+      const rgb = getPixelFromImageData(imageData, imageWidth, startX + x, startY + y);
+      const distance = getRgbDistance(rgb, backgroundRgb);
+      const brightnessDelta =
+        Math.abs(((rgb[0] + rgb[1] + rgb[2]) / 3) - ((backgroundRgb[0] + backgroundRgb[1] + backgroundRgb[2]) / 3));
+      mask[y * roiWidth + x] = distance >= 34 || brightnessDelta >= 24 ? 1 : 0;
+    }
+  }
+
+  return normalizeParserBinaryMask(mask, roiWidth, roiHeight);
+}
+
+function recognizeCellCodeFromCenter(imageData, imageWidth, cellStartX, cellStartY, cellWidth, cellHeight, backgroundRgb, palette) {
+  if (!palette.length) {
+    return null;
+  }
+
+  const sampleMask = buildParserCellTextMask(imageData, imageWidth, cellStartX, cellStartY, cellWidth, cellHeight, backgroundRgb);
+  if (!sampleMask) {
+    return null;
+  }
+
+  let bestMatch = null;
+  for (const entry of palette) {
+    const variants = [
+      renderParserCodeTemplateMask(entry.code, '"Arial Black", "Segoe UI", sans-serif'),
+      renderParserCodeTemplateMask(entry.code, '"Segoe UI", Arial, sans-serif'),
+    ].filter(Boolean);
+    for (const variant of variants) {
+      const score = compareParserBinaryMasks(sampleMask, variant);
+      if (!bestMatch || score > bestMatch.score) {
+        bestMatch = { code: entry.code, score };
+      }
+    }
+  }
+
+  if (!bestMatch || bestMatch.score < 0.16) {
+    return null;
+  }
+
+  return bestMatch;
+}
+
+function getPixelVariance(samples) {
+  if (!samples.length) {
+    return 0;
+  }
+  const average = averageRgb(samples);
+  return samples.reduce((sum, rgb) => sum + getRgbDistance(rgb, average), 0) / samples.length;
+}
+
+function buildBackgroundSamplePixels(imageData, imageWidth, cellStartX, cellStartY, cellWidth, cellHeight, sampling) {
+  const mode = sampling.mode || "ring";
+  const outerMarginRatio = clamp(
+    Number.isFinite(sampling.outerMarginRatio) ? sampling.outerMarginRatio : SAMPLE_OUTER_MARGIN_RATIO,
+    0.02,
+    0.28,
+  );
+  const innerExclusionRatio = Math.max(
+    clamp(
+      Number.isFinite(sampling.innerExclusionRatio) ? sampling.innerExclusionRatio : SAMPLE_INNER_EXCLUSION_RATIO,
+      0.12,
+      0.42,
+    ),
+    outerMarginRatio + 0.04,
+  );
+  const offsetXRatio = clamp(
+    Number.isFinite(sampling.offsetXRatio) ? sampling.offsetXRatio : 0,
+    -0.28,
+    0.28,
+  );
+  const offsetYRatio = clamp(
+    Number.isFinite(sampling.offsetYRatio) ? sampling.offsetYRatio : 0,
+    -0.28,
+    0.28,
+  );
+  const pixels = [];
+  const points = [];
+
+  if (mode === "anchor") {
+    const anchorXRatio = clamp(Number.isFinite(sampling.anchorXRatio) ? sampling.anchorXRatio : 0.18, 0.05, 0.95);
+    const anchorYRatio = clamp(Number.isFinite(sampling.anchorYRatio) ? sampling.anchorYRatio : 0.18, 0.05, 0.95);
+    const sampleX = cellStartX + anchorXRatio * cellWidth;
+    const sampleY = cellStartY + anchorYRatio * cellHeight;
+    pixels.push(getPatchAverageFromImageData(imageData, imageWidth, sampleX, sampleY, sampling.patchRadius || 1));
+    points.push({ x: sampleX, y: sampleY });
+    return { pixels, points };
+  }
+
+  for (const [ratioA, ratioB] of SAMPLE_RING_OFFSETS) {
+    const shiftedX = typeof ratioA === "number" ? clamp(ratioA + offsetXRatio, 0.05, 0.95) : ratioA;
+    const shiftedY = typeof ratioB === "number" ? clamp(ratioB + offsetYRatio, 0.05, 0.95) : ratioB;
+    const ratioX =
+      shiftedX === "left" ? outerMarginRatio : shiftedX === "right" ? 1 - outerMarginRatio : shiftedX;
+    const ratioY =
+      shiftedY === "top" ? outerMarginRatio : shiftedY === "bottom" ? 1 - outerMarginRatio : shiftedY;
+    const sampleX = clamp(cellStartX + ratioX * cellWidth, cellStartX, cellStartX + cellWidth);
+    const sampleY = clamp(cellStartY + ratioY * cellHeight, cellStartY, cellStartY + cellHeight);
+    if (
+      ratioX > innerExclusionRatio &&
+      ratioX < 1 - innerExclusionRatio &&
+      ratioY > innerExclusionRatio &&
+      ratioY < 1 - innerExclusionRatio
+    ) {
+      continue;
+    }
+    pixels.push(getPatchAverageFromImageData(imageData, imageWidth, sampleX, sampleY, sampling.patchRadius || 1));
+    points.push({ x: sampleX, y: sampleY });
+  }
+
+  return { pixels, points };
+}
+
+function resolveCellColor(sampledPixels, palette) {
+  if (!sampledPixels.length) {
+    return {
+      sampledRgb: [0, 0, 0],
+      code: "UNSET",
+      matchedRgb: [0, 0, 0],
+      distance: null,
+      confidence: 0,
+      voteBreakdown: [],
+    };
+  }
+
+  const sampledRgb = averageRgb(sampledPixels);
+  if (!palette.length) {
+    return {
+      sampledRgb,
+      code: "UNSET",
+      matchedRgb: sampledRgb,
+      distance: null,
+      confidence: 0,
+      voteBreakdown: [],
+    };
+  }
+
+  const votes = new Map();
+
+  for (const pixel of sampledPixels) {
+    const nearest = matchNearestColor(pixel, palette);
+    if (!nearest) {
+      continue;
+    }
+
+    const existing = votes.get(nearest.code) || {
+      count: 0,
+      pixels: [],
+      distanceSum: 0,
+      rgb: nearest.rgb,
+    };
+    existing.count += 1;
+    existing.pixels.push(pixel);
+    existing.distanceSum += nearest.distance;
+    votes.set(nearest.code, existing);
+  }
+
+  const winnerEntry = [...votes.entries()]
+    .map(([code, entry]) => ({
+      code,
+      ...entry,
+      averageDistance: entry.distanceSum / Math.max(1, entry.count),
+    }))
+    .sort(
+      (left, right) =>
+        right.count - left.count ||
+        left.averageDistance - right.averageDistance ||
+        left.code.localeCompare(right.code),
+    )[0];
+
+  if (!winnerEntry) {
+    return {
+      sampledRgb,
+      code: "UNSET",
+      matchedRgb: sampledRgb,
+      distance: null,
+      confidence: 0,
+      voteBreakdown: [],
+    };
+  }
+
+  const winnerPixels = winnerEntry.pixels.length ? winnerEntry.pixels : sampledPixels;
+  const stableRgb = medianRgb(winnerPixels);
+  const supportRatio = winnerEntry.count / sampledPixels.length;
+  const distanceSpread = Math.max(0, 1 - winnerEntry.averageDistance / 35);
+  const confidence = Math.max(0, Math.min(1, supportRatio * 0.8 + distanceSpread * 0.2));
+  const voteBreakdown = [...votes.entries()]
+    .map(([code, entry]) => ({
+      code,
+      count: entry.count,
+      matchedRgb: entry.rgb,
+      averageDistance: entry.distanceSum / Math.max(1, entry.count),
+      ratio: entry.count / sampledPixels.length,
+    }))
+    .sort(
+      (left, right) =>
+        right.count - left.count ||
+        left.averageDistance - right.averageDistance ||
+        left.code.localeCompare(right.code),
+    );
+
+  return {
+    sampledRgb: stableRgb,
+    code: winnerEntry.code,
+    matchedRgb: winnerEntry.rgb,
+    distance: Number.isFinite(winnerEntry.averageDistance) ? winnerEntry.averageDistance : getPerceptualDistance(stableRgb, winnerEntry.rgb),
+    confidence,
+    voteBreakdown,
+  };
+}
+
+function analyzeGrid({ originalCanvas, crop, gridSize, palette, sampling = {}, gridAlignment = {}, recognition = {}, overrides = {} }) {
+  const { width: gridWidth, height: gridHeight } = gridSize;
+  const ctx = originalCanvas.getContext("2d", { willReadFrequently: true });
+  const imageData = ctx.getImageData(0, 0, originalCanvas.width, originalCanvas.height);
+  const paletteByCode = new Map(palette.map((entry) => [entry.code, entry]));
+  const watermarkTextAssist = Boolean(recognition.watermarkTextAssist);
+  const excludeOuterLayers = clamp(
+    Number.isFinite(recognition.excludeOuterLayers) ? recognition.excludeOuterLayers : 0,
+    0,
+    8,
+  );
+  const exhaustiveTextAssist = watermarkTextAssist && gridWidth * gridHeight <= 1600 && palette.length <= 24;
+  const baseCellWidth = crop.width / gridWidth;
+  const baseCellHeight = crop.height / gridHeight;
+  const cellWidthScale = clamp(
+    Number.isFinite(gridAlignment.cellWidthScale) ? gridAlignment.cellWidthScale : 1,
+    0.75,
+    1.25,
+  );
+  const cellHeightScale = clamp(
+    Number.isFinite(gridAlignment.cellHeightScale) ? gridAlignment.cellHeightScale : 1,
+    0.75,
+    1.25,
+  );
+  const originX = crop.x + (Number.isFinite(gridAlignment.offsetX) ? gridAlignment.offsetX : 0);
+  const originY = crop.y + (Number.isFinite(gridAlignment.offsetY) ? gridAlignment.offsetY : 0);
+  const cellWidth = baseCellWidth * cellWidthScale;
+  const cellHeight = baseCellHeight * cellHeightScale;
+  const cells = [];
+
+  for (let row = 0; row < gridHeight; row += 1) {
+    for (let col = 0; col < gridWidth; col += 1) {
+      const cellStartX = originX + col * cellWidth;
+      const cellStartY = originY + row * cellHeight;
+      const centerX = cellStartX + 0.5 * cellWidth;
+      const centerY = cellStartY + 0.5 * cellHeight;
+      const sampledPack = buildBackgroundSamplePixels(
+        imageData,
+        originalCanvas.width,
+        cellStartX,
+        cellStartY,
+        cellWidth,
+        cellHeight,
+        sampling,
+      );
+      const resolved = resolveCellColor(sampledPack.pixels, palette);
+      const isExcluded = shouldExcludeCell(col, row, gridWidth, gridHeight, excludeOuterLayers);
+      const textAssistCandidate =
+        watermarkTextAssist &&
+        !isExcluded &&
+        (
+          exhaustiveTextAssist ||
+          resolved.confidence < 0.9 ||
+          (resolved.voteBreakdown[0]?.ratio || 0) < 0.92 ||
+          getPixelVariance(sampledPack.pixels) > 14
+        )
+          ? recognizeCellCodeFromCenter(
+              imageData,
+              originalCanvas.width,
+              cellStartX,
+              cellStartY,
+              cellWidth,
+              cellHeight,
+              resolved.sampledRgb,
+              palette,
+            )
+          : null;
+      const shouldApplyTextAssist =
+        Boolean(textAssistCandidate) &&
+        (
+          textAssistCandidate.score >= 0.24 ||
+          (
+            textAssistCandidate.score >= 0.18 &&
+            (resolved.confidence < 0.86 || (resolved.voteBreakdown[0]?.ratio || 0) < 0.72 || resolved.code === "UNSET")
+          )
+        );
+      const textMatchedEntry = shouldApplyTextAssist ? paletteByCode.get(textAssistCandidate.code) : null;
+      const overrideCode = overrides[`${col + 1},${row + 1}`] || "";
+      const matchedEntry = overrideCode ? paletteByCode.get(overrideCode) : null;
+      const finalCode = isExcluded ? "EXCLUDED" : overrideCode || textMatchedEntry?.code || resolved.code;
+      const finalMatchedRgb = isExcluded ? resolved.sampledRgb : matchedEntry?.rgb || textMatchedEntry?.rgb || resolved.matchedRgb;
+
+      cells.push({
+        x: col + 1,
+        y: row + 1,
+        cellStartX,
+        cellStartY,
+        cellWidth,
+        cellHeight,
+        centerX,
+        centerY,
+        sampledRgb: resolved.sampledRgb,
+        code: finalCode,
+        matchedRgb: finalMatchedRgb,
+        distance: isExcluded ? null : overrideCode ? 0 : textMatchedEntry ? 0 : resolved.distance,
+        confidence: isExcluded
+          ? 0
+          : overrideCode
+            ? 1
+            : textMatchedEntry
+              ? Math.max(resolved.confidence, Math.min(0.98, 0.58 + textAssistCandidate.score))
+              : resolved.confidence,
+        voteBreakdown: overrideCode
+          ? [
+              {
+                code: overrideCode,
+                count: sampledPack.pixels.length,
+                matchedRgb: matchedEntry?.rgb || resolved.matchedRgb,
+                averageDistance: 0,
+                ratio: 1,
+              },
+            ]
+          : resolved.voteBreakdown,
+        manualOverride: Boolean(overrideCode),
+        excluded: isExcluded,
+        textAssist: textAssistCandidate
+          ? {
+              code: textAssistCandidate.code,
+              score: textAssistCandidate.score,
+              applied: Boolean(textMatchedEntry),
+            }
+          : null,
+        samplePoints: sampledPack.points,
+      });
+    }
+  }
+
+  const globalStats = buildStats(cells);
+  const chunks = chunkCells(cells, gridWidth, gridHeight, 5);
+
+  return {
+    gridWidth,
+    gridHeight,
+    crop,
+    originX,
+    originY,
+    baseCellWidth,
+    baseCellHeight,
+    cellWidth,
+    cellHeight,
+    cells,
+    chunks,
+    globalStats,
+    unmatchedCount: cells.filter((cell) => cell.code === "UNSET").length,
+  };
+}
+
+function getCurrentChunk(gridData) {
+  if (!gridData?.chunks?.length) {
+    return null;
+  }
+
+  return gridData.chunks[gridData.currentChunkIndex ?? 0] || gridData.chunks[0];
+}
+
+function generateSmartPlan(gridData, strategyType) {
+  const currentChunk = getCurrentChunk(gridData);
+  if (!currentChunk) {
+    return {
+      title: "Waiting for chunk data",
+      description: "Run grid analysis first, then the assistant can generate a 5x5 build guide.",
+      highlights: [],
+    };
+  }
+
+  if (strategyType === "edge-first") {
+    const highlights = currentChunk.cells
+      .filter((cell) => {
+        if (cell.excluded) {
+          return false;
+        }
+        const localX = cell.x - currentChunk.startX + 1;
+        const localY = cell.y - currentChunk.startY + 1;
+        return (
+          localX === 1 ||
+          localY === 1 ||
+          localX === currentChunk.width ||
+          localY === currentChunk.height
+        );
+      })
+      .map((cell) => ({ x: cell.x, y: cell.y }));
+
+    return {
+      title: "Strategy B: edge first",
+      description: `Place the ${highlights.length} edge beads first, then fill the inner cells to stabilize the outline.`,
+      highlights,
+    };
+  }
+
+  const stats = buildStats(currentChunk.cells);
+  const dominant = stats[0];
+  const highlights = currentChunk.cells
+    .filter((cell) => cell.code === dominant?.code)
+    .map((cell) => ({ x: cell.x, y: cell.y }));
+
+  return {
+    title: "Strategy A: dominant color fill",
+    description: dominant
+      ? `The most common color in this chunk is ${dominant.code} (${dominant.count} beads). Finish that color first for faster batching.`
+      : "No color statistics are available for this chunk yet.",
+    highlights,
+  };
+}
+
+const imageInput = document.querySelector("#imageInput");
+const imagePickBtn = document.querySelector("#imagePickBtn");
+const imagePickHint = document.querySelector("#imagePickHint");
+const gridWidthInput = document.querySelector("#gridWidthInput");
+const gridHeightInput = document.querySelector("#gridHeightInput");
+const cropCanvas = document.querySelector("#cropCanvas");
+const applyCropBtn = document.querySelector("#applyCropBtn");
+const resetCropBtn = document.querySelector("#resetCropBtn");
+const imageStatus = document.querySelector("#imageStatus");
+const imageSizeText = document.querySelector("#imageSizeText");
+const cropInfoText = document.querySelector("#cropInfoText");
+const cellSizeText = document.querySelector("#cellSizeText");
+const paletteStatus = document.querySelector("#paletteStatus");
+const paletteCodeInput = document.querySelector("#paletteCodeInput");
+const paletteColorInput = document.querySelector("#paletteColorInput");
+const paletteRgbInput = document.querySelector("#paletteRgbInput");
+const addPaletteBtn = document.querySelector("#addPaletteBtn");
+const pickColorBtn = document.querySelector("#pickColorBtn");
+const paletteList = document.querySelector("#paletteList");
+const analyzeBtn = document.querySelector("#analyzeBtn");
+const downloadJsonBtn = document.querySelector("#downloadJsonBtn");
+const parseStatus = document.querySelector("#parseStatus");
+const analysisSummary = document.querySelector("#analysisSummary");
+const viewerCanvas = document.querySelector("#viewerCanvas");
+const overviewCanvas = document.querySelector("#overviewCanvas");
+const strategySelect = document.querySelector("#strategySelect");
+const prevChunkBtn = document.querySelector("#prevChunkBtn");
+const nextChunkBtn = document.querySelector("#nextChunkBtn");
+const moveUpBtn = document.querySelector("#moveUpBtn");
+const moveLeftBtn = document.querySelector("#moveLeftBtn");
+const moveRightBtn = document.querySelector("#moveRightBtn");
+const moveDownBtn = document.querySelector("#moveDownBtn");
+const chunkLabel = document.querySelector("#chunkLabel");
+const chunkCoordLabel = document.querySelector("#chunkCoordLabel");
+const localStats = document.querySelector("#localStats");
+const globalStats = document.querySelector("#globalStats");
+const planPanel = document.querySelector("#planPanel");
+const tabBtns = [...document.querySelectorAll(".tab-btn")];
+const tabPanels = [...document.querySelectorAll(".tab-panel")];
+const tabStep4Btn = document.querySelector('[data-tab="tab-step4"]');
+const togglePaletteBtn = document.querySelector("#togglePaletteBtn");
+const paletteSearchInput = document.querySelector("#paletteSearchInput");
+const minimapCanvas = document.querySelector("#minimapCanvas");
+const minimapCtx = minimapCanvas?.getContext("2d") || null;
+const overviewCtx = overviewCanvas?.getContext("2d") || null;
+const step2Panel = document.querySelector("#tab-step2");
+const step3Panel = document.querySelector("#tab-step3");
+const step4Panel = document.querySelector("#tab-step4");
+const focusColorSelect = document.querySelector("#focusColorSelect");
+const focusTopColorBtn = document.querySelector("#focusTopColorBtn");
+const clearFocusColorBtn = document.querySelector("#clearFocusColorBtn");
+const focusColorSummary = document.querySelector("#focusColorSummary");
+
+const cropCtx = cropCanvas.getContext("2d");
+const viewerCtx = viewerCanvas.getContext("2d");
+
+let cropGesture = null;
+let viewerSwipeStart = null;
+let paletteExpanded = false;
+let paletteImageInput = null;
+let extractLegendBtn = null;
+let uploadPaletteImageBtn = null;
+let paletteReviewCanvas = null;
+let paletteReviewCtx = null;
+let paletteReviewStatus = null;
+let paletteReviewCodeInput = null;
+let paletteReviewRetryBtn = null;
+let paletteReviewSaveBtn = null;
+let paletteReviewDeleteBtn = null;
+let paletteReviewClearBtn = null;
+let paletteReviewModeSelect = null;
+let paletteReviewColorValue = null;
+let paletteReviewResetColorBtn = null;
+let paletteReviewDetailCanvas = null;
+let paletteReviewDetailCtx = null;
+let paletteReviewList = null;
+let sampleOverlayToggle = null;
+let sampleModeSelect = null;
+let sampleOuterMarginInput = null;
+let sampleInsetInput = null;
+let sampleOffsetXInput = null;
+let sampleOffsetYInput = null;
+let watermarkTextAssistInput = null;
+let excludeOuterLayersInput = null;
+let sampleAnchorInfo = null;
+let sampleDemoCanvas = null;
+let sampleDemoCtx = null;
+let sampleInspectCanvas = null;
+let sampleInspectCtx = null;
+let sampleInspectStatus = null;
+let sampleInspectVotes = null;
+let sampleInspectWindowSelect = null;
+let seedTargetCodeSelect = null;
+let seedContrastCodeSelect = null;
+let seedThresholdInput = null;
+let seedAddTargetBtn = null;
+let seedAddContrastBtn = null;
+let seedAnalyzeBtn = null;
+let seedApplyBtn = null;
+let seedClearBtn = null;
+let seedResetOverridesBtn = null;
+let seedStatus = null;
+let seedTargetList = null;
+let seedContrastList = null;
+let seedCandidateList = null;
+let gridOffsetXInput = null;
+let gridOffsetYInput = null;
+let cellWidthScaleInput = null;
+let cellHeightScaleInput = null;
+let previewCellInput = null;
+let resetAlignmentBtn = null;
+let paletteImportModeSelect = null;
+let paletteSetNameText = null;
+let markerPresetSelect = null;
+let markerSummary = null;
+let paletteReviewGesture = null;
+let sampleInspectHitRegions = [];
+let sampleInspectOverlay = null;
+let sampleInspectGesture = null;
+
+let paletteReviewState = {
+  sourceCanvas: null,
+  sourceName: "",
+  detections: [],
+  selection: null,
+  display: null,
+  activeIndex: -1,
+  manualRgb: null,
+  manualPoint: null,
+  detailDisplay: null,
+};
+
+const STORAGE_KEY = "pindou-assistant-state-v1";
+const BACKEND_PALETTE_OCR_URL = "/api/ocr/palette-card";
+const BACKEND_MANUAL_SWATCH_OCR_URL = "/api/ocr/manual-swatch";
+
+function ensureCanvasSize(canvas, width, height) {
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.floor(width * dpr);
+  canvas.height = Math.floor(height * dpr);
+  canvas.style.height = `${height}px`;
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return ctx;
+}
+
+function clampWithinImage(point, image) {
+  return {
+    x: Math.min(image.width, Math.max(0, point.x)),
+    y: Math.min(image.height, Math.max(0, point.y)),
+  };
+}
+
+function normalizeRect(start, end) {
+  return {
+    x: Math.min(start.x, end.x),
+    y: Math.min(start.y, end.y),
+    width: Math.abs(end.x - start.x),
+    height: Math.abs(end.y - start.y),
+  };
+}
+
+function getCanvasEventPoint(event, display) {
+  const rect = cropCanvas.getBoundingClientRect();
+  const localX = event.clientX - rect.left;
+  const localY = event.clientY - rect.top;
+  return clampWithinImage(
+    {
+      x: (localX - display.offsetX) / display.scale,
+      y: (localY - display.offsetY) / display.scale,
+    },
+    getState().image,
+  );
+}
+
+function getViewerPoint(event) {
+  const rect = viewerCanvas.getBoundingClientRect();
+  return {
+    x: event.clientX - rect.left,
+    y: event.clientY - rect.top,
+  };
+}
+
+function createImageBitmapCanvas(image) {
+  const canvas = document.createElement("canvas");
+  canvas.width = image.naturalWidth;
+  canvas.height = image.naturalHeight;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(image, 0, 0);
+  return canvas;
+}
+
+function setImagePickHint(message, isError = false) {
+  if (!imagePickHint) {
+    return;
+  }
+  imagePickHint.textContent = message;
+  imagePickHint.style.color = isError ? "#c13d3d" : "#745f4b";
+}
+
+function openImagePicker() {
+  if (!imageInput) {
+    return;
+  }
+
+  setImagePickHint("宸茶姹傜郴缁熷浘鐗囬€夋嫨鍣?..");
+
+  try {
+    if (typeof imageInput.showPicker === "function") {
+      imageInput.showPicker();
+      return;
+    }
+  } catch (error) {
+    console.warn("showPicker failed, fallback to click:", error);
+  }
+
+  try {
+    imageInput.click();
+  } catch (error) {
+    console.warn("input.click failed:", error);
+    setImagePickHint("浏览器拦截了选图器，请优先点左侧“直接打开系统选图”。", true);
+  }
+}
+
+function canUseBackendOcr() {
+  return window.location.protocol === "http:" || window.location.protocol === "https:";
+}
+
+function getBackendEngineLabel(engineName) {
+  if (!engineName) {
+    return "后端 OCR";
+  }
+  if (engineName === "rapidocr") {
+    return "后端 OCR（RapidOCR）";
+  }
+  if (engineName === "paddleocr") {
+    return "后端 OCR（PaddleOCR）";
+  }
+  return `后端 OCR（${engineName}）`;
+}
+
+async function requestBackendPaletteOcr(file) {
+  const formData = new FormData();
+  formData.append("file", file);
+  const response = await fetch(BACKEND_PALETTE_OCR_URL, {
+    method: "POST",
+    body: formData,
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message = payload?.ocrError || payload?.detail || `OCR request failed (${response.status})`;
+    throw new Error(message);
+  }
+  return payload;
+}
+
+async function requestBackendManualSwatchOcr(file) {
+  const formData = new FormData();
+  formData.append("file", file);
+  const response = await fetch(BACKEND_MANUAL_SWATCH_OCR_URL, {
+    method: "POST",
+    body: formData,
+  });
+
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message = payload?.ocrError || payload?.detail || `Manual OCR request failed (${response.status})`;
+    throw new Error(message);
+  }
+  return payload;
+}
+
+function createStoredImageRecord(dataUrl, image) {
+  return {
+    dataUrl,
+    width: image.naturalWidth,
+    height: image.naturalHeight,
+  };
+}
+
+async function loadImageFromDataUrl(dataUrl) {
+  const image = new Image();
+  image.decoding = "async";
+  image.src = dataUrl;
+  await image.decode();
+  return image;
+}
+
+function buildPersistedState(state) {
+  return {
+    gridSize: state.gridSize,
+    gridAlignment: state.gridAlignment,
+    sampling: state.sampling,
+    recognition: state.recognition,
+    showSamplingOverlay: state.showSamplingOverlay,
+    crop: state.crop,
+    cropConfirmed: state.cropConfirmed,
+    palette: state.palette,
+    paletteSetName: state.paletteSetName,
+    paletteImportMode: state.paletteImportMode,
+    paletteReviewMode: state.paletteReviewMode,
+    strategyType: state.strategyType,
+    focusColorCode: state.focusColorCode,
+    markerPreset: state.markerPreset,
+    selectedPreviewCell: state.selectedPreviewCell,
+    sampleInspectWindow: state.sampleInspectWindow,
+    manualOverrides: state.manualOverrides,
+    seedAssist: state.seedAssist,
+    storedImage: state.storedImage || null,
+    paletteReviewSnapshot: buildPaletteReviewSnapshot(),
+  };
+}
+
+function buildPaletteReviewSnapshot() {
+  if (!paletteReviewState.sourceCanvas) {
+    return null;
+  }
+
+  return {
+    sourceName: paletteReviewState.sourceName || "",
+    sourceDataUrl: paletteReviewState.sourceCanvas.toDataURL("image/jpeg", 0.9),
+    detections: (paletteReviewState.detections || []).map((item) => ({
+      swatchIndex: item.swatchIndex,
+      rgb: item.rgb,
+      box: item.box,
+      sampleBox: item.sampleBox || null,
+      manualRgb: item.manualRgb || null,
+      manualPoint: item.manualPoint || null,
+      code: item.code || "",
+      score: item.score || 0,
+    })),
+    selection: paletteReviewState.selection || null,
+    activeIndex: paletteReviewState.activeIndex,
+    manualRgb: paletteReviewState.manualRgb || null,
+    manualPoint: paletteReviewState.manualPoint || null,
+  };
+}
+
+function saveStateToStorage() {
+  const state = getState();
+  const payload = buildPersistedState(state);
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+  } catch (error) {
+    console.warn("Failed to persist local state:", error);
+  }
+}
+
+async function restoreStateFromStorage() {
+  const raw = window.localStorage.getItem(STORAGE_KEY);
+  if (!raw) {
+    return;
+  }
+
+  try {
+    const parsed = JSON.parse(raw);
+    const parsedSeedAssist = parsed.seedAssist || {};
+    const nextState = {
+      ...getState(),
+      gridSize: parsed.gridSize || getState().gridSize,
+      gridAlignment: parsed.gridAlignment || getState().gridAlignment,
+      sampling: {
+        ...getState().sampling,
+        ...(parsed.sampling || {}),
+      },
+      recognition: {
+        ...getState().recognition,
+        ...(parsed.recognition || {}),
+      },
+      showSamplingOverlay:
+        typeof parsed.showSamplingOverlay === "boolean" ? parsed.showSamplingOverlay : getState().showSamplingOverlay,
+      crop: parsed.crop || getState().crop,
+      cropConfirmed: Boolean(parsed.cropConfirmed),
+      palette: parsed.palette || getState().palette,
+      paletteSetName: parsed.paletteSetName || getState().paletteSetName,
+      paletteImportMode: parsed.paletteImportMode || getState().paletteImportMode,
+      paletteReviewMode: parsed.paletteReviewMode || getState().paletteReviewMode,
+      strategyType: parsed.strategyType || getState().strategyType,
+      focusColorCode: parsed.focusColorCode || "",
+      markerPreset: parsed.markerPreset || getState().markerPreset,
+      selectedPreviewCell: parsed.selectedPreviewCell || getState().selectedPreviewCell,
+      sampleInspectWindow: parsed.sampleInspectWindow || getState().sampleInspectWindow,
+      manualOverrides: parsed.manualOverrides || getState().manualOverrides,
+      seedAssist: {
+        ...getState().seedAssist,
+        ...parsedSeedAssist,
+        targetSeeds: parsedSeedAssist.targetSeeds || parsedSeedAssist.seeds || [],
+        contrastSeeds: parsedSeedAssist.contrastSeeds || [],
+        candidates: [],
+        targetPrototypeRgb: parsedSeedAssist.targetPrototypeRgb || parsedSeedAssist.prototypeRgb || null,
+        contrastPrototypeRgb: parsedSeedAssist.contrastPrototypeRgb || null,
+        contrastCode: parsedSeedAssist.contrastCode || "",
+      },
+      storedImage: parsed.storedImage || null,
+    };
+
+    if (parsed.storedImage?.dataUrl) {
+      const image = await loadImageFromDataUrl(parsed.storedImage.dataUrl);
+      nextState.image = {
+        element: image,
+        width: image.naturalWidth,
+        height: image.naturalHeight,
+      };
+      nextState.originalCanvas = createImageBitmapCanvas(image);
+      nextState.cropDisplay = buildCropDisplay({
+        width: image.naturalWidth,
+        height: image.naturalHeight,
+      });
+      nextState.crop =
+        parsed.crop || {
+          x: 0,
+          y: 0,
+          width: image.naturalWidth,
+          height: image.naturalHeight,
+        };
+    }
+
+    if (parsed.paletteReviewSnapshot?.sourceDataUrl) {
+      try {
+        const paletteImage = await loadImageFromDataUrl(parsed.paletteReviewSnapshot.sourceDataUrl);
+        paletteReviewState = {
+          sourceCanvas: createImageBitmapCanvas(paletteImage),
+          sourceName: parsed.paletteReviewSnapshot.sourceName || "",
+          detections: parsed.paletteReviewSnapshot.detections || [],
+          selection: parsed.paletteReviewSnapshot.selection || null,
+          display: null,
+          activeIndex:
+            Number.isInteger(parsed.paletteReviewSnapshot.activeIndex) ? parsed.paletteReviewSnapshot.activeIndex : -1,
+          manualRgb: parsed.paletteReviewSnapshot.manualRgb || null,
+          manualPoint: parsed.paletteReviewSnapshot.manualPoint || null,
+          detailDisplay: null,
+        };
+      } catch (error) {
+        console.warn("Failed to restore palette review snapshot:", error);
+      }
+    }
+
+    setState(nextState);
+  } catch (error) {
+    console.warn("Failed to restore local state:", error);
+  }
+}
+
+function getMasterPalette() {
+  const colors = window.PINDOU_COLORS || [];
+  return colors.map((entry) => ({
+    code: entry.code,
+    rgb: hexToRgb(entry.hex),
+  }));
+}
+
+function buildLegendProbeCanvas(originalCanvas) {
+  const width = originalCanvas.width;
+  const height = Math.floor(originalCanvas.height * 0.34);
+  const startY = originalCanvas.height - height;
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(originalCanvas, 0, startY, width, height, 0, 0, width, height);
+  return canvas;
+}
+
+function extractPaletteCandidatesFromCanvas(sourceCanvas, options = {}) {
+  const ctx = sourceCanvas.getContext("2d", { willReadFrequently: true });
+  const imageData = ctx.getImageData(0, 0, sourceCanvas.width, sourceCanvas.height);
+  const masterPalette = getMasterPalette();
+  const buckets = new Map();
+  const step = Math.max(1, options.sampleStep || 4);
+
+  for (let y = 0; y < sourceCanvas.height; y += step) {
+    for (let x = 0; x < sourceCanvas.width; x += step) {
+      const index = (y * sourceCanvas.width + x) * 4;
+      const r = imageData.data[index];
+      const g = imageData.data[index + 1];
+      const b = imageData.data[index + 2];
+      const a = imageData.data[index + 3];
+      if (a < 200) {
+        continue;
+      }
+
+      const brightness = (r + g + b) / 3;
+      if (brightness > 248) {
+        continue;
+      }
+
+      const key = `${Math.round(r / 12)}|${Math.round(g / 12)}|${Math.round(b / 12)}`;
+      const bucket = buckets.get(key) || {
+        count: 0,
+        sum: [0, 0, 0],
+      };
+
+      bucket.count += 1;
+      bucket.sum[0] += r;
+      bucket.sum[1] += g;
+      bucket.sum[2] += b;
+      buckets.set(key, bucket);
+    }
+  }
+
+  const bucketList = [...buckets.values()]
+    .map((bucket) => ({
+      count: bucket.count,
+      rgb: bucket.sum.map((value) => Math.round(value / bucket.count)),
+    }))
+    .sort((left, right) => right.count - left.count);
+
+  const minCount = options.minCount || Math.max(10, Math.floor(sourceCanvas.width * sourceCanvas.height / 6000));
+  const limit = Math.min(bucketList.length, options.maxBuckets || 96);
+  const usedCodes = new Set();
+  const extracted = [];
+
+  for (let index = 0; index < limit; index += 1) {
+    const candidate = bucketList[index];
+    if (candidate.count < minCount) {
+      continue;
+    }
+
+    const nearest = getNearestMasterColor(candidate.rgb, masterPalette);
+    if (!nearest || usedCodes.has(nearest.code)) {
+      continue;
+    }
+
+    usedCodes.add(nearest.code);
+    extracted.push({
+      code: nearest.code,
+      rgb: candidate.rgb,
+      standardRgb: nearest.rgb,
+      count: candidate.count,
+      distance: nearest.distance,
+    });
+  }
+
+  return extracted.sort((left, right) => left.code.localeCompare(right.code));
+}
+
+function isPotentialSwatchPixel(r, g, b, a) {
+  if (a < 180) {
+    return false;
+  }
+
+  const brightness = (r + g + b) / 3;
+  const spread = Math.max(r, g, b) - Math.min(r, g, b);
+  return brightness < 246 && (spread > 12 || brightness < 220);
+}
+
+const CODE_TEMPLATE_CACHE = new Map();
+
+function getCodeCandidateList() {
+  const knownCodes = new Set((window.PINDOU_COLORS || []).map((entry) => entry.code));
+  for (const entry of getState().palette) {
+    knownCodes.add(entry.code);
+  }
+  return [...knownCodes].sort((left, right) => left.localeCompare(right));
+}
+
+function buildActiveBounds(mask, width, height) {
+  let minX = width;
+  let minY = height;
+  let maxX = -1;
+  let maxY = -1;
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      if (!mask[y * width + x]) {
+        continue;
+      }
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+    }
+  }
+
+  if (maxX < minX || maxY < minY) {
+    return null;
+  }
+
+  return {
+    x: minX,
+    y: minY,
+    width: maxX - minX + 1,
+    height: maxY - minY + 1,
+  };
+}
+
+function normalizeBinaryMask(mask, width, height, targetWidth = 72, targetHeight = 28) {
+  const bounds = buildActiveBounds(mask, width, height);
+  if (!bounds) {
+    return null;
+  }
+
+  const normalized = new Uint8Array(targetWidth * targetHeight);
+
+  for (let targetY = 0; targetY < targetHeight; targetY += 1) {
+    for (let targetX = 0; targetX < targetWidth; targetX += 1) {
+      const sourceX = bounds.x + ((targetX + 0.5) / targetWidth) * bounds.width;
+      const sourceY = bounds.y + ((targetY + 0.5) / targetHeight) * bounds.height;
+      const pixelX = clampNumber(Math.floor(sourceX), 0, width - 1);
+      const pixelY = clampNumber(Math.floor(sourceY), 0, height - 1);
+      normalized[targetY * targetWidth + targetX] = mask[pixelY * width + pixelX];
+    }
+  }
+
+  return {
+    width: targetWidth,
+    height: targetHeight,
+    data: normalized,
+  };
+}
+
+function renderCodeTemplateMask(code, fontFamily) {
+  const cacheKey = `${code}::${fontFamily}`;
+  if (CODE_TEMPLATE_CACHE.has(cacheKey)) {
+    return CODE_TEMPLATE_CACHE.get(cacheKey);
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = 220;
+  canvas.height = 90;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#111111";
+
+  let fontSize = 56;
+  for (; fontSize >= 22; fontSize -= 2) {
+    ctx.font = `900 ${fontSize}px ${fontFamily}`;
+    if (ctx.measureText(code).width <= canvas.width * 0.82) {
+      break;
+    }
+  }
+
+  ctx.font = `900 ${fontSize}px ${fontFamily}`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(code, canvas.width / 2, canvas.height / 2 + 2);
+
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const mask = new Uint8Array(canvas.width * canvas.height);
+  for (let index = 0; index < mask.length; index += 1) {
+    const pixelIndex = index * 4;
+    const brightness =
+      (imageData.data[pixelIndex] + imageData.data[pixelIndex + 1] + imageData.data[pixelIndex + 2]) / 3;
+    mask[index] = brightness < 180 ? 1 : 0;
+  }
+
+  const normalized = normalizeBinaryMask(mask, canvas.width, canvas.height);
+  CODE_TEMPLATE_CACHE.set(cacheKey, normalized);
+  return normalized;
+}
+
+function getCodeTemplateVariants(code) {
+  return [
+    renderCodeTemplateMask(code, '"Arial Black", "Segoe UI", sans-serif'),
+    renderCodeTemplateMask(code, '"Segoe UI", Arial, sans-serif'),
+  ].filter(Boolean);
+}
+
+function compareBinaryMasks(left, right) {
+  let overlap = 0;
+  let union = 0;
+  let leftCount = 0;
+  let rightCount = 0;
+
+  for (let index = 0; index < left.data.length; index += 1) {
+    const leftValue = left.data[index];
+    const rightValue = right.data[index];
+    if (leftValue) {
+      leftCount += 1;
+    }
+    if (rightValue) {
+      rightCount += 1;
+    }
+    if (leftValue || rightValue) {
+      union += 1;
+    }
+    if (leftValue && rightValue) {
+      overlap += 1;
+    }
+  }
+
+  if (!union) {
+    return 0;
+  }
+
+  const densityPenalty = Math.abs(leftCount - rightCount) / Math.max(leftCount, rightCount, 1);
+  return overlap / union - densityPenalty * 0.18;
+}
+
+function buildTextMaskFromSwatch(sourceCanvas, box, backgroundRgb) {
+  const ctx = sourceCanvas.getContext("2d", { willReadFrequently: true });
+  const roi = {
+    x: Math.max(0, Math.floor(box.x + box.width * 0.04)),
+    y: Math.max(0, Math.floor(box.y + box.height * 0.12)),
+    width: Math.max(16, Math.floor(box.width * 0.46)),
+    height: Math.max(12, Math.floor(box.height * 0.62)),
+  };
+  const imageData = ctx.getImageData(
+    roi.x,
+    roi.y,
+    Math.min(roi.width, sourceCanvas.width - roi.x),
+    Math.min(roi.height, sourceCanvas.height - roi.y),
+  );
+  const mask = new Uint8Array(imageData.width * imageData.height);
+  const threshold = 44;
+
+  for (let y = 0; y < imageData.height; y += 1) {
+    for (let x = 0; x < imageData.width; x += 1) {
+      const index = (y * imageData.width + x) * 4;
+      const rgb = [imageData.data[index], imageData.data[index + 1], imageData.data[index + 2]];
+      mask[y * imageData.width + x] = getRgbDistance(rgb, backgroundRgb) >= threshold ? 1 : 0;
+    }
+  }
+
+  return normalizeBinaryMask(mask, imageData.width, imageData.height);
+}
+
+function recognizeSwatchCode(sourceCanvas, swatch) {
+  const sampleMask = buildTextMaskFromSwatch(sourceCanvas, swatch.box, swatch.rgb);
+  if (!sampleMask) {
+    return null;
+  }
+
+  let bestMatch = null;
+  for (const code of getCodeCandidateList()) {
+    const variants = getCodeTemplateVariants(code);
+    for (const variant of variants) {
+      const score = compareBinaryMasks(sampleMask, variant);
+      if (!bestMatch || score > bestMatch.score) {
+        bestMatch = { code, score };
+      }
+    }
+  }
+
+  if (!bestMatch || bestMatch.score < 0.18) {
+    return null;
+  }
+
+  return bestMatch;
+}
+
+function extractSwatchBoxesFromCanvas(sourceCanvas, options = {}) {
+  const ctx = sourceCanvas.getContext("2d", { willReadFrequently: true });
+  const imageData = ctx.getImageData(0, 0, sourceCanvas.width, sourceCanvas.height);
+  const step = Math.max(2, options.step || 3);
+  const width = Math.ceil(sourceCanvas.width / step);
+  const height = Math.ceil(sourceCanvas.height / step);
+  const mask = new Uint8Array(width * height);
+
+  for (let row = 0; row < height; row += 1) {
+    for (let col = 0; col < width; col += 1) {
+      const x = Math.min(sourceCanvas.width - 1, col * step);
+      const y = Math.min(sourceCanvas.height - 1, row * step);
+      const index = (y * sourceCanvas.width + x) * 4;
+      if (
+        isPotentialSwatchPixel(
+          imageData.data[index],
+          imageData.data[index + 1],
+          imageData.data[index + 2],
+          imageData.data[index + 3],
+        )
+      ) {
+        mask[row * width + col] = 1;
+      }
+    }
+  }
+
+  const visited = new Uint8Array(width * height);
+  const boxes = [];
+  const queue = [];
+  const minCells = Math.max(18, Math.floor((width * height) / 800));
+
+  for (let row = 0; row < height; row += 1) {
+    for (let col = 0; col < width; col += 1) {
+      const startIndex = row * width + col;
+      if (!mask[startIndex] || visited[startIndex]) {
+        continue;
+      }
+
+      visited[startIndex] = 1;
+      queue.length = 0;
+      queue.push([col, row]);
+      let head = 0;
+      let count = 0;
+      let minCol = col;
+      let maxCol = col;
+      let minRow = row;
+      let maxRow = row;
+
+      while (head < queue.length) {
+        const [currentCol, currentRow] = queue[head];
+        head += 1;
+        count += 1;
+        minCol = Math.min(minCol, currentCol);
+        maxCol = Math.max(maxCol, currentCol);
+        minRow = Math.min(minRow, currentRow);
+        maxRow = Math.max(maxRow, currentRow);
+
+        const neighbors = [
+          [currentCol - 1, currentRow],
+          [currentCol + 1, currentRow],
+          [currentCol, currentRow - 1],
+          [currentCol, currentRow + 1],
+        ];
+
+        for (const [nextCol, nextRow] of neighbors) {
+          if (nextCol < 0 || nextRow < 0 || nextCol >= width || nextRow >= height) {
+            continue;
+          }
+          const nextIndex = nextRow * width + nextCol;
+          if (!mask[nextIndex] || visited[nextIndex]) {
+            continue;
+          }
+          visited[nextIndex] = 1;
+          queue.push([nextCol, nextRow]);
+        }
+      }
+
+      const boxWidth = (maxCol - minCol + 1) * step;
+      const boxHeight = (maxRow - minRow + 1) * step;
+      if (count < minCells || boxWidth < 36 || boxHeight < 20) {
+        continue;
+      }
+
+      boxes.push({
+        x: minCol * step,
+        y: minRow * step,
+        width: Math.min(sourceCanvas.width - minCol * step, boxWidth),
+        height: Math.min(sourceCanvas.height - minRow * step, boxHeight),
+      });
+    }
+  }
+
+  return boxes.sort((left, right) => {
+    const rowDelta = Math.abs(left.y - right.y);
+    if (rowDelta > 18) {
+      return left.y - right.y;
+    }
+    return left.x - right.x;
+  });
+}
+
+function samplePaletteSwatchRgb(sourceCanvas, box) {
+  const ctx = sourceCanvas.getContext("2d", { willReadFrequently: true });
+  const marginX = Math.max(2, Math.round(box.width * 0.1));
+  const marginY = Math.max(2, Math.round(box.height * 0.14));
+  const ringPoints = [
+    [box.x + marginX, box.y + marginY],
+    [box.x + box.width / 2, box.y + marginY],
+    [box.x + box.width - marginX, box.y + marginY],
+    [box.x + marginX, box.y + box.height - marginY],
+    [box.x + box.width / 2, box.y + box.height - marginY],
+    [box.x + box.width - marginX, box.y + box.height - marginY],
+    [box.x + marginX, box.y + box.height / 2],
+    [box.x + box.width - marginX, box.y + box.height / 2],
+  ];
+
+  const pixels = ringPoints.map(([x, y]) =>
+    [
+      ...ctx
+        .getImageData(
+          Math.max(0, Math.min(sourceCanvas.width - 2, Math.round(x))),
+          Math.max(0, Math.min(sourceCanvas.height - 2, Math.round(y))),
+          2,
+          2,
+        )
+        .data,
+    ],
+  );
+
+  const averages = pixels.map((data) => {
+    let r = 0;
+    let g = 0;
+    let b = 0;
+    const count = data.length / 4;
+    for (let index = 0; index < data.length; index += 4) {
+      r += data[index];
+      g += data[index + 1];
+      b += data[index + 2];
+    }
+    return [Math.round(r / count), Math.round(g / count), Math.round(b / count)];
+  });
+
+  return averages.reduce(
+    (accumulator, rgb) => {
+      accumulator[0] += rgb[0];
+      accumulator[1] += rgb[1];
+      accumulator[2] += rgb[2];
+      return accumulator;
+    },
+    [0, 0, 0],
+  ).map((value) => Math.round(value / averages.length));
+}
+
+function scoreManualSwatchBox(sourceCanvas, box) {
+  const ctx = sourceCanvas.getContext("2d", { willReadFrequently: true });
+  const startX = Math.max(0, Math.floor(box.x));
+  const startY = Math.max(0, Math.floor(box.y));
+  const width = Math.max(2, Math.min(sourceCanvas.width - startX, Math.floor(box.width)));
+  const height = Math.max(2, Math.min(sourceCanvas.height - startY, Math.floor(box.height)));
+  const imageData = ctx.getImageData(startX, startY, width, height);
+  let active = 0;
+
+  for (let index = 0; index < imageData.data.length; index += 4) {
+    if (
+      isPotentialSwatchPixel(
+        imageData.data[index],
+        imageData.data[index + 1],
+        imageData.data[index + 2],
+        imageData.data[index + 3],
+      )
+    ) {
+      active += 1;
+    }
+  }
+
+  const total = Math.max(1, width * height);
+  const density = active / total;
+  const area = width * height;
+  const leftBias = 1 - (box.x + box.width * 0.5) / Math.max(1, sourceCanvas.width);
+  return density * area * (0.75 + leftBias * 0.35);
+}
+
+function detectBestManualSwatchBox(sourceCanvas) {
+  const boxes = extractSwatchBoxesFromCanvas(sourceCanvas, { step: 2 });
+  if (!boxes.length) {
+    return { x: 0, y: 0, width: sourceCanvas.width, height: sourceCanvas.height };
+  }
+
+  return [...boxes]
+    .map((box) => ({
+      box,
+      score: scoreManualSwatchBox(sourceCanvas, box),
+    }))
+    .sort((left, right) => right.score - left.score)[0].box;
+}
+
+function buildManualSelectionSwatch(sourceCanvas) {
+  const swatchBox = detectBestManualSwatchBox(sourceCanvas);
+  return {
+    swatchIndex: paletteReviewState.detections.length + 1,
+    rgb: samplePaletteSwatchRgb(sourceCanvas, swatchBox),
+    box: { ...swatchBox },
+  };
+}
+
+function sampleMedianRgbFromCanvasPoint(sourceCanvas, x, y, radius = 2) {
+  const ctx = sourceCanvas.getContext("2d", { willReadFrequently: true });
+  const pixels = [];
+  const px = Math.round(x);
+  const py = Math.round(y);
+  for (let offsetY = -radius; offsetY <= radius; offsetY += 1) {
+    for (let offsetX = -radius; offsetX <= radius; offsetX += 1) {
+      const safeX = clamp(px + offsetX, 0, sourceCanvas.width - 1);
+      const safeY = clamp(py + offsetY, 0, sourceCanvas.height - 1);
+      const data = ctx.getImageData(safeX, safeY, 1, 1).data;
+      pixels.push([data[0], data[1], data[2]]);
+    }
+  }
+  return medianRgbList(pixels);
+}
+
+function extractPaletteSwatchesFromCanvas(sourceCanvas) {
+  const boxes = extractSwatchBoxesFromCanvas(sourceCanvas);
+  return boxes.map((box, index) => ({
+    swatchIndex: index + 1,
+    rgb: samplePaletteSwatchRgb(sourceCanvas, box),
+    box,
+  }));
+}
+
+function extractPaletteEntriesByOcr(sourceCanvas) {
+  const swatches = extractPaletteSwatchesFromCanvas(sourceCanvas);
+  const entries = [];
+  const seenCodes = new Set();
+
+  for (const swatch of swatches) {
+    const matched = recognizeSwatchCode(sourceCanvas, swatch);
+    if (!matched || seenCodes.has(matched.code)) {
+      continue;
+    }
+    seenCodes.add(matched.code);
+    entries.push({
+      code: matched.code,
+      rgb: swatch.rgb,
+      standardRgb: swatch.rgb,
+      score: matched.score,
+      swatchIndex: swatch.swatchIndex,
+    });
+  }
+
+  return {
+    entries: entries.sort((left, right) => left.code.localeCompare(right.code)),
+    swatchCount: swatches.length,
+  };
+}
+
+function analyzePaletteCardCanvas(sourceCanvas) {
+  return extractPaletteSwatchesFromCanvas(sourceCanvas).map((swatch) => {
+    const matched = recognizeSwatchCode(sourceCanvas, swatch);
+    return {
+      ...swatch,
+      code: matched?.code || "",
+      score: matched?.score || 0,
+    };
+  });
+}
+
+function setPaletteReviewData(sourceCanvas, sourceName, detections) {
+  paletteReviewState = {
+    sourceCanvas,
+    sourceName,
+    detections: detections || [],
+    selection: null,
+    display: null,
+    activeIndex: -1,
+    manualRgb: null,
+    manualPoint: null,
+    detailDisplay: null,
+  };
+  saveStateToStorage();
+}
+
+function getRecognizedEntriesFromDetections(detections) {
+  const byCode = new Map();
+  for (const item of detections) {
+    if (!item.code) {
+      continue;
+    }
+    const existing = byCode.get(item.code);
+    if (!existing || item.score > existing.score) {
+      byCode.set(item.code, {
+        code: item.code,
+        rgb: item.rgb,
+        standardRgb: item.rgb,
+        score: item.score,
+      });
+    }
+  }
+  return [...byCode.values()].sort((left, right) => left.code.localeCompare(right.code));
+}
+
+function setPaletteReviewStatus(message, isError = false) {
+  if (!paletteReviewStatus) {
+    return;
+  }
+  paletteReviewStatus.textContent = message;
+  paletteReviewStatus.style.color = isError ? "#c13d3d" : "#745f4b";
+}
+
+function renderPaletteReviewCodeList() {
+  const dataList = document.querySelector("#paletteReviewCodeList");
+  if (!dataList) {
+    return;
+  }
+  dataList.innerHTML = getCodeCandidateList()
+    .map((code) => `<option value="${code}"></option>`)
+    .join("");
+}
+
+function createCanvasFromRegion(sourceCanvas, box) {
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.floor(box.width));
+  canvas.height = Math.max(1, Math.floor(box.height));
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.drawImage(
+    sourceCanvas,
+    Math.floor(box.x),
+    Math.floor(box.y),
+    Math.floor(box.width),
+    Math.floor(box.height),
+    0,
+    0,
+    canvas.width,
+    canvas.height,
+  );
+  return canvas;
+}
+
+function buildPaletteReviewDisplay() {
+  if (!paletteReviewCanvas || !paletteReviewState.sourceCanvas) {
+    return null;
+  }
+
+  const sourceCanvas = paletteReviewState.sourceCanvas;
+  const width = paletteReviewCanvas.clientWidth || paletteReviewCanvas.parentElement?.clientWidth || 320;
+  const safeWidth = Math.max(280, width);
+  const scale = safeWidth / sourceCanvas.width;
+  const height = Math.max(180, Math.round(sourceCanvas.height * scale));
+  ensureCanvasSize(paletteReviewCanvas, safeWidth, height);
+  return {
+    scale,
+    drawWidth: sourceCanvas.width * scale,
+    drawHeight: sourceCanvas.height * scale,
+    offsetX: 0,
+    offsetY: 0,
+  };
+}
+
+function getPaletteReviewPoint(event) {
+  const rect = paletteReviewCanvas.getBoundingClientRect();
+  const display = paletteReviewState.display;
+  const localX = event.clientX - rect.left;
+  const localY = event.clientY - rect.top;
+  return {
+    x: clampNumber((localX - display.offsetX) / display.scale, 0, paletteReviewState.sourceCanvas.width),
+    y: clampNumber((localY - display.offsetY) / display.scale, 0, paletteReviewState.sourceCanvas.height),
+  };
+}
+
+function hitPaletteDetection(point) {
+  return paletteReviewState.detections.findIndex(
+    (item) =>
+      point.x >= item.box.x &&
+      point.x <= item.box.x + item.box.width &&
+      point.y >= item.box.y &&
+      point.y <= item.box.y + item.box.height,
+  );
+}
+
+function renderPaletteReview() {
+  if (!paletteReviewCanvas || !paletteReviewCtx) {
+    return;
+  }
+
+  if (!paletteReviewState.sourceCanvas) {
+    ensureCanvasSize(paletteReviewCanvas, Math.max(280, paletteReviewCanvas.clientWidth || 320), 180);
+    paletteReviewCtx.clearRect(0, 0, paletteReviewCanvas.clientWidth || 320, 180);
+    paletteReviewCtx.fillStyle = "#6f6257";
+    paletteReviewCtx.font = "600 14px 'Segoe UI'";
+    paletteReviewCtx.fillText("上传颜色卡后，这里会显示识别框和色号结果。", 14, 28);
+    renderPaletteReviewDetailV2();
+    renderPaletteReviewList();
+    return;
+  }
+
+  paletteReviewState.display = buildPaletteReviewDisplay();
+  const { sourceCanvas, display, detections, selection, activeIndex } = paletteReviewState;
+  paletteReviewCtx.clearRect(0, 0, display.drawWidth, display.drawHeight);
+  paletteReviewCtx.drawImage(sourceCanvas, 0, 0, display.drawWidth, display.drawHeight);
+
+  for (let index = 0; index < detections.length; index += 1) {
+    const item = detections[index];
+    const x = item.box.x * display.scale;
+    const y = item.box.y * display.scale;
+    const width = item.box.width * display.scale;
+    const height = item.box.height * display.scale;
+    const isActive = index === activeIndex;
+
+    paletteReviewCtx.strokeStyle = item.code ? (isActive ? "#2f6c73" : "#4bab72") : "#c13d3d";
+    paletteReviewCtx.lineWidth = isActive ? 3 : 2;
+    paletteReviewCtx.strokeRect(x, y, width, height);
+    paletteReviewCtx.fillStyle = item.code ? "rgba(47,108,115,0.9)" : "rgba(193,61,61,0.9)";
+    paletteReviewCtx.beginPath();
+    paletteReviewCtx.arc(x + 10, y + 10, 8, 0, Math.PI * 2);
+    paletteReviewCtx.fill();
+    paletteReviewCtx.fillStyle = "#fff";
+    paletteReviewCtx.font = "700 11px 'Segoe UI'";
+    paletteReviewCtx.textAlign = "center";
+    paletteReviewCtx.textBaseline = "middle";
+    paletteReviewCtx.fillText(String(index + 1), x + 10, y + 10);
+
+    if (item.sampleBox) {
+      paletteReviewCtx.strokeStyle = "rgba(244, 198, 79, 0.98)";
+      paletteReviewCtx.lineWidth = 2;
+      paletteReviewCtx.setLineDash([4, 3]);
+      paletteReviewCtx.strokeRect(
+        item.sampleBox.x * display.scale,
+        item.sampleBox.y * display.scale,
+        item.sampleBox.width * display.scale,
+        item.sampleBox.height * display.scale,
+      );
+      paletteReviewCtx.setLineDash([]);
+    }
+  }
+
+  if (selection) {
+    paletteReviewCtx.strokeStyle = "#f4c64f";
+    paletteReviewCtx.lineWidth = 2;
+    paletteReviewCtx.setLineDash([6, 4]);
+    paletteReviewCtx.strokeRect(
+      selection.x * display.scale,
+      selection.y * display.scale,
+      selection.width * display.scale,
+      selection.height * display.scale,
+    );
+    paletteReviewCtx.setLineDash([]);
+  }
+
+  renderPaletteReviewDetailV2();
+  renderPaletteReviewList();
+}
+
+function renderPaletteReviewDetail() {
+  if (!paletteReviewDetailCanvas || !paletteReviewDetailCtx) {
+    return;
+  }
+
+  ensureCanvasSize(paletteReviewDetailCanvas, 220, 120);
+  paletteReviewDetailCtx.clearRect(0, 0, 220, 120);
+  paletteReviewDetailCtx.fillStyle = "#fffdf8";
+  paletteReviewDetailCtx.fillRect(0, 0, 220, 120);
+
+  const activeItem =
+    paletteReviewState.activeIndex >= 0 ? paletteReviewState.detections[paletteReviewState.activeIndex] : null;
+  const selection = activeItem ? activeItem.box : paletteReviewState.selection;
+  if (!paletteReviewState.sourceCanvas || !selection) {
+    paletteReviewDetailCtx.fillStyle = "#6f6257";
+    paletteReviewDetailCtx.font = "600 13px 'Segoe UI'";
+    paletteReviewDetailCtx.fillText("点击右侧结果，或在整图中框选一个色块。", 12, 28);
+    return;
+  }
+
+  const previewCanvas = createCanvasFromRegion(paletteReviewState.sourceCanvas, selection);
+  const scale = Math.min(196 / previewCanvas.width, 88 / previewCanvas.height);
+  const drawWidth = previewCanvas.width * scale;
+  const drawHeight = previewCanvas.height * scale;
+  const offsetX = (220 - drawWidth) / 2;
+  const offsetY = 10 + (88 - drawHeight) / 2;
+  paletteReviewDetailCtx.drawImage(previewCanvas, offsetX, offsetY, drawWidth, drawHeight);
+  paletteReviewDetailCtx.strokeStyle = "#d9c9b6";
+  paletteReviewDetailCtx.strokeRect(offsetX, offsetY, drawWidth, drawHeight);
+  if (activeItem?.sampleBox) {
+    const innerX = ((activeItem.sampleBox.x - selection.x) / selection.width) * drawWidth;
+    const innerY = ((activeItem.sampleBox.y - selection.y) / selection.height) * drawHeight;
+    const innerW = (activeItem.sampleBox.width / selection.width) * drawWidth;
+    const innerH = (activeItem.sampleBox.height / selection.height) * drawHeight;
+    paletteReviewDetailCtx.strokeStyle = "#f4c64f";
+    paletteReviewDetailCtx.setLineDash([4, 3]);
+    paletteReviewDetailCtx.strokeRect(offsetX + innerX, offsetY + innerY, innerW, innerH);
+    paletteReviewDetailCtx.setLineDash([]);
+  }
+  paletteReviewDetailCtx.fillStyle = "#302116";
+  paletteReviewDetailCtx.font = "700 12px 'Segoe UI'";
+  const label = activeItem?.code || paletteReviewCodeInput?.value?.trim().toUpperCase() || "待填写";
+  paletteReviewDetailCtx.fillText(`褰撳墠鑹插彿锛?{label}`, 12, 108);
+}
+
+function renderPaletteReviewDetailV2() {
+  if (!paletteReviewDetailCanvas || !paletteReviewDetailCtx) {
+    return;
+  }
+
+  ensureCanvasSize(paletteReviewDetailCanvas, 220, 120);
+  paletteReviewDetailCtx.clearRect(0, 0, 220, 120);
+  paletteReviewDetailCtx.fillStyle = "#fffdf8";
+  paletteReviewDetailCtx.fillRect(0, 0, 220, 120);
+  paletteReviewState.detailDisplay = null;
+
+  const activeItem =
+    paletteReviewState.activeIndex >= 0 ? paletteReviewState.detections[paletteReviewState.activeIndex] : null;
+  const selection = activeItem ? activeItem.box : paletteReviewState.selection;
+  if (!paletteReviewState.sourceCanvas || !selection) {
+    paletteReviewDetailCtx.fillStyle = "#6f6257";
+    paletteReviewDetailCtx.font = "600 13px 'Segoe UI'";
+    paletteReviewDetailCtx.fillText("点击左侧识别框，或重新拖一个手动框选区域。", 12, 28);
+    if (paletteReviewColorValue) {
+      paletteReviewColorValue.textContent = "在右侧放大预览上点一下真实底色，保存时会优先使用你手选的颜色。";
+    }
+    return;
+  }
+
+  const previewCanvas = createCanvasFromRegion(paletteReviewState.sourceCanvas, selection);
+  const scale = Math.min(196 / previewCanvas.width, 88 / previewCanvas.height);
+  const drawWidth = previewCanvas.width * scale;
+  const drawHeight = previewCanvas.height * scale;
+  const offsetX = (220 - drawWidth) / 2;
+  const offsetY = 10 + (88 - drawHeight) / 2;
+  paletteReviewState.detailDisplay = {
+    selection: { ...selection },
+    offsetX,
+    offsetY,
+    drawWidth,
+    drawHeight,
+  };
+  paletteReviewDetailCtx.drawImage(previewCanvas, offsetX, offsetY, drawWidth, drawHeight);
+  paletteReviewDetailCtx.strokeStyle = "#d9c9b6";
+  paletteReviewDetailCtx.strokeRect(offsetX, offsetY, drawWidth, drawHeight);
+
+  const sampleBox = activeItem?.sampleBox;
+  if (sampleBox) {
+    const innerX = offsetX + ((sampleBox.x - selection.x) / selection.width) * drawWidth;
+    const innerY = offsetY + ((sampleBox.y - selection.y) / selection.height) * drawHeight;
+    const innerW = (sampleBox.width / selection.width) * drawWidth;
+    const innerH = (sampleBox.height / selection.height) * drawHeight;
+    paletteReviewDetailCtx.strokeStyle = "#f4c64f";
+    paletteReviewDetailCtx.setLineDash([4, 3]);
+    paletteReviewDetailCtx.strokeRect(innerX, innerY, innerW, innerH);
+    paletteReviewDetailCtx.setLineDash([]);
+  }
+
+  if (
+    paletteReviewState.manualPoint &&
+    paletteReviewState.manualPoint.x >= selection.x &&
+    paletteReviewState.manualPoint.x <= selection.x + selection.width &&
+    paletteReviewState.manualPoint.y >= selection.y &&
+    paletteReviewState.manualPoint.y <= selection.y + selection.height
+  ) {
+    const markerX = offsetX + ((paletteReviewState.manualPoint.x - selection.x) / selection.width) * drawWidth;
+    const markerY = offsetY + ((paletteReviewState.manualPoint.y - selection.y) / selection.height) * drawHeight;
+    paletteReviewDetailCtx.fillStyle = "#9d5333";
+    paletteReviewDetailCtx.beginPath();
+    paletteReviewDetailCtx.arc(markerX, markerY, 4.5, 0, Math.PI * 2);
+    paletteReviewDetailCtx.fill();
+    paletteReviewDetailCtx.strokeStyle = "#fffdf8";
+    paletteReviewDetailCtx.lineWidth = 2;
+    paletteReviewDetailCtx.stroke();
+  }
+
+  paletteReviewDetailCtx.fillStyle = "#302116";
+  paletteReviewDetailCtx.font = "700 12px 'Segoe UI'";
+  const label = activeItem?.code || paletteReviewCodeInput?.value?.trim().toUpperCase() || "待填写";
+  paletteReviewDetailCtx.fillText(`当前色号：${label}`, 12, 108);
+
+  const effectiveRgb = paletteReviewState.manualRgb || activeItem?.manualRgb || activeItem?.rgb || null;
+  if (paletteReviewColorValue) {
+    paletteReviewColorValue.textContent = effectiveRgb
+      ? `当前取色：${formatRgb(effectiveRgb)}  ${rgbToHex(effectiveRgb)}${paletteReviewState.manualRgb ? "（手选）" : "（自动）"}`
+      : "在右侧放大预览上点一下真实底色，保存时会优先使用你手选的颜色。";
+  }
+}
+
+function handlePaletteReviewDetailPointerDown(event) {
+  const detail = paletteReviewState.detailDisplay;
+  if (!detail || !paletteReviewState.sourceCanvas) {
+    return;
+  }
+
+  const rect = paletteReviewDetailCanvas.getBoundingClientRect();
+  const localX = event.clientX - rect.left;
+  const localY = event.clientY - rect.top;
+  if (
+    localX < detail.offsetX ||
+    localX > detail.offsetX + detail.drawWidth ||
+    localY < detail.offsetY ||
+    localY > detail.offsetY + detail.drawHeight
+  ) {
+    return;
+  }
+
+  const ratioX = (localX - detail.offsetX) / detail.drawWidth;
+  const ratioY = (localY - detail.offsetY) / detail.drawHeight;
+  const sourceX = detail.selection.x + ratioX * detail.selection.width;
+  const sourceY = detail.selection.y + ratioY * detail.selection.height;
+  const rgb = sampleMedianRgbFromCanvasPoint(paletteReviewState.sourceCanvas, sourceX, sourceY, 2);
+  paletteReviewState.manualRgb = rgb;
+  paletteReviewState.manualPoint = {
+    x: sourceX,
+    y: sourceY,
+  };
+  setPaletteReviewStatus(`已手动选择真实颜色：${formatRgb(rgb)} ${rgbToHex(rgb)}。保存时会优先使用这次手选颜色。`);
+  saveStateToStorage();
+  renderPaletteReview();
+}
+
+function resetPaletteReviewManualColor() {
+  paletteReviewState.manualRgb = null;
+  paletteReviewState.manualPoint = null;
+  setPaletteReviewStatus("已清除手选颜色，保存时会恢复使用自动检测到的内部色块颜色。");
+  saveStateToStorage();
+  renderPaletteReview();
+}
+
+function renderPaletteReviewList() {
+  if (!paletteReviewList) {
+    return;
+  }
+
+  const detections = paletteReviewState.detections || [];
+  if (!detections.length) {
+    paletteReviewList.innerHTML = `<p class="empty-text">上传颜色卡后，这里会列出每个检测到的色块。</p>`;
+    return;
+  }
+
+  paletteReviewList.innerHTML = detections
+    .map((item, index) => {
+      const activeClass = index === paletteReviewState.activeIndex ? " active" : "";
+      const statusClass = item.code ? "ok" : "pending";
+      return `
+        <button type="button" class="palette-review-item${activeClass}" data-review-index="${index}">
+          <span class="palette-review-chip ${statusClass}">${index + 1}</span>
+          <span class="palette-review-swatch" style="background:${rgbToHex(item.rgb)}"></span>
+          <span class="palette-review-meta">
+            <strong>${item.code || "寰呰ˉ"}</strong>
+            <small>${item.code ? `缃俊 ${(item.score || 0).toFixed(2)}` : "鐐规淇"}</small>
+          </span>
+        </button>
+      `;
+    })
+    .join("");
+}
+
+function updatePaletteReviewModeUi() {
+  const mode = getState().paletteReviewMode || "color-first";
+  if (paletteReviewModeSelect && document.activeElement !== paletteReviewModeSelect) {
+    paletteReviewModeSelect.value = mode;
+  }
+  if (paletteReviewRetryBtn) {
+    paletteReviewRetryBtn.disabled = mode !== "ocr-first";
+    paletteReviewRetryBtn.textContent = mode === "ocr-first" ? "后端重识别文字" : "当前模式不识别文字";
+  }
+  if (paletteReviewSaveBtn) {
+    paletteReviewSaveBtn.textContent = mode === "ocr-first" ? "按当前色号保存色卡" : "按手填色号保存色卡";
+  }
+}
+
+function removePaletteEntryByCodeIfUnused(code) {
+  if (!code) {
+    return;
+  }
+  const stillUsed = paletteReviewState.detections.some((item) => item.code === code);
+  if (stillUsed) {
+    return;
+  }
+  patchState({
+    palette: getState().palette.filter((entry) => entry.code !== code),
+  });
+  resetAnalysis();
+}
+
+function deleteActivePaletteReviewDetection() {
+  const activeIndex = paletteReviewState.activeIndex;
+  if (activeIndex < 0 || activeIndex >= paletteReviewState.detections.length) {
+    setPaletteReviewStatus("请先点选一个误识别框，再删除。", true);
+    return;
+  }
+
+  const [removed] = paletteReviewState.detections.splice(activeIndex, 1);
+  paletteReviewState.activeIndex = -1;
+  paletteReviewState.selection = null;
+  paletteReviewState.manualRgb = null;
+  paletteReviewState.manualPoint = null;
+  if (paletteReviewCodeInput) {
+    paletteReviewCodeInput.value = "";
+  }
+  removePaletteEntryByCodeIfUnused(removed?.code || "");
+  setPaletteReviewStatus(
+    removed?.code
+      ? `????? ${removed.swatchIndex}?${removed.code}????????????????????????????`
+      : "????????????????????????????????????",
+  );
+  saveStateToStorage();
+  renderPaletteReview();
+}
+
+function recalibratePaletteWithSwatches(swatches, setName) {
+  const currentPalette = [...getState().palette];
+  if (!currentPalette.length || !swatches.length) {
+    return 0;
+  }
+
+  const unusedSwatches = [...swatches];
+  const recalibrated = currentPalette.map((entry) => {
+    let bestIndex = 0;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    for (let index = 0; index < unusedSwatches.length; index += 1) {
+      const distance = getRgbDistance(entry.rgb, unusedSwatches[index].rgb);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestIndex = index;
+      }
+    }
+
+    const [matchedSwatch] = unusedSwatches.splice(bestIndex, 1);
+    return matchedSwatch
+      ? {
+          ...entry,
+          rgb: matchedSwatch.rgb,
+          standardRgb: matchedSwatch.rgb,
+        }
+      : entry;
+  });
+
+  patchState({
+    palette: recalibrated,
+    paletteSetName: setName,
+  });
+  resetAnalysis();
+  return Math.min(currentPalette.length, swatches.length);
+}
+
+function getNearestMasterColor(sampleRgb, palette) {
+  let bestMatch = null;
+  for (const entry of palette) {
+    const distance =
+      Math.sqrt(
+        (sampleRgb[0] - entry.rgb[0]) ** 2 +
+          (sampleRgb[1] - entry.rgb[1]) ** 2 +
+          (sampleRgb[2] - entry.rgb[2]) ** 2,
+      );
+    if (!bestMatch || distance < bestMatch.distance) {
+      bestMatch = {
+        code: entry.code,
+        rgb: entry.rgb,
+        distance,
+      };
+    }
+  }
+  return bestMatch;
+}
+
+function buildCropDisplay(image) {
+  const width = cropCanvas.clientWidth || cropCanvas.parentElement.clientWidth || 320;
+  const safeWidth = Math.max(280, width);
+  const scale = safeWidth / image.width;
+  const height = Math.max(320, image.height * scale);
+  ensureCanvasSize(cropCanvas, safeWidth, height);
+
+  return {
+    scale,
+    drawWidth: image.width * scale,
+    drawHeight: image.height * scale,
+    offsetX: 0,
+    offsetY: 0,
+  };
+}
+
+function getEffectiveGridMetrics(state) {
+  if (!state.crop) {
+    return null;
+  }
+
+  const baseCellWidth = state.crop.width / state.gridSize.width;
+  const baseCellHeight = state.crop.height / state.gridSize.height;
+  const cellWidthScale = Number.isFinite(state.gridAlignment?.cellWidthScale) ? state.gridAlignment.cellWidthScale : 1;
+  const cellHeightScale = Number.isFinite(state.gridAlignment?.cellHeightScale) ? state.gridAlignment.cellHeightScale : 1;
+  const cellWidth = baseCellWidth * cellWidthScale;
+  const cellHeight = baseCellHeight * cellHeightScale;
+  const originX = state.crop.x + (Number.isFinite(state.gridAlignment?.offsetX) ? state.gridAlignment.offsetX : 0);
+  const originY = state.crop.y + (Number.isFinite(state.gridAlignment?.offsetY) ? state.gridAlignment.offsetY : 0);
+
+  return {
+    originX,
+    originY,
+    baseCellWidth,
+    baseCellHeight,
+    cellWidth,
+    cellHeight,
+  };
+}
+
+function clampNumber(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function clampPreviewCell(cell, gridSize = getState().gridSize) {
+  return {
+    x: clampNumber(Math.round(cell?.x || 1), 1, Math.max(1, gridSize.width)),
+    y: clampNumber(Math.round(cell?.y || 1), 1, Math.max(1, gridSize.height)),
+  };
+}
+
+function parsePreviewCellValue(text, gridSize = getState().gridSize) {
+  const [rawX, rawY] = String(text || "")
+    .split(/[,锛寈X ]+/)
+    .filter(Boolean);
+
+  return clampPreviewCell(
+    {
+      x: Number.parseInt(rawX, 10) || 1,
+      y: Number.parseInt(rawY, 10) || 1,
+    },
+    gridSize,
+  );
+}
+
+function getCellRectByIndex(state, cellX, cellY) {
+  const metrics = getEffectiveGridMetrics(state);
+  if (!metrics) {
+    return null;
+  }
+
+  return {
+    x: metrics.originX + (cellX - 1) * metrics.cellWidth,
+    y: metrics.originY + (cellY - 1) * metrics.cellHeight,
+    width: metrics.cellWidth,
+    height: metrics.cellHeight,
+  };
+}
+
+function getInsetRect(cellRect, sampling) {
+  const insetRatio = Math.min(0.35, Math.max(0.08, sampling?.insetRatio ?? 0.22));
+  const insetX = cellRect.width * insetRatio;
+  const insetY = cellRect.height * insetRatio;
+  return {
+    x: cellRect.x + insetX,
+    y: cellRect.y + insetY,
+    width: Math.max(1, cellRect.width - insetX * 2),
+    height: Math.max(1, cellRect.height - insetY * 2),
+  };
+}
+
+function getSamplingRects(cellRect, sampling) {
+  const outerMarginRatio = clampNumber(sampling?.outerMarginRatio ?? 0.1, 0.02, 0.28);
+  const rawInnerRatio = clampNumber(sampling?.innerExclusionRatio ?? 0.24, 0.12, 0.42);
+  const innerExclusionRatio = Math.max(rawInnerRatio, outerMarginRatio + 0.04);
+  const outerX = cellRect.width * outerMarginRatio;
+  const outerY = cellRect.height * outerMarginRatio;
+  const innerX = cellRect.width * innerExclusionRatio;
+  const innerY = cellRect.height * innerExclusionRatio;
+
+  return {
+    outerRect: {
+      x: cellRect.x + outerX,
+      y: cellRect.y + outerY,
+      width: Math.max(1, cellRect.width - outerX * 2),
+      height: Math.max(1, cellRect.height - outerY * 2),
+    },
+    innerRect: {
+      x: cellRect.x + innerX,
+      y: cellRect.y + innerY,
+      width: Math.max(1, cellRect.width - innerX * 2),
+      height: Math.max(1, cellRect.height - innerY * 2),
+    },
+    outerMarginRatio,
+    innerExclusionRatio,
+  };
+}
+
+function getTextAssistRect(cellRect) {
+  return {
+    x: cellRect.x + cellRect.width * 0.2,
+    y: cellRect.y + cellRect.height * 0.18,
+    width: Math.max(1, cellRect.width * 0.6),
+    height: Math.max(1, cellRect.height * 0.64),
+  };
+}
+
+function buildSamplingPreviewPoints(cellRect, sampling) {
+  const mode = sampling?.mode || "ring";
+  const { outerRect, innerRect, outerMarginRatio } = getSamplingRects(cellRect, sampling);
+  const offsetXRatio = clampNumber(sampling?.offsetXRatio ?? 0, -0.28, 0.28);
+  const offsetYRatio = clampNumber(sampling?.offsetYRatio ?? 0, -0.28, 0.28);
+
+  if (mode === "anchor") {
+    const anchorXRatio = clampNumber(sampling?.anchorXRatio ?? 0.18, 0.05, 0.95);
+    const anchorYRatio = clampNumber(sampling?.anchorYRatio ?? 0.18, 0.05, 0.95);
+    return {
+      outerRect,
+      innerRect,
+      points: [
+        {
+          x: cellRect.x + anchorXRatio * cellRect.width,
+          y: cellRect.y + anchorYRatio * cellRect.height,
+        },
+      ],
+    };
+  }
+
+  const ringOffsets = [
+    [0.18, outerMarginRatio],
+    [0.36, outerMarginRatio],
+    [0.5, outerMarginRatio],
+    [0.64, outerMarginRatio],
+    [0.82, outerMarginRatio],
+    [0.18, 1 - outerMarginRatio],
+    [0.36, 1 - outerMarginRatio],
+    [0.5, 1 - outerMarginRatio],
+    [0.64, 1 - outerMarginRatio],
+    [0.82, 1 - outerMarginRatio],
+    [outerMarginRatio, 0.34],
+    [outerMarginRatio, 0.5],
+    [outerMarginRatio, 0.66],
+    [1 - outerMarginRatio, 0.34],
+    [1 - outerMarginRatio, 0.5],
+    [1 - outerMarginRatio, 0.66],
+  ];
+
+  return {
+    outerRect,
+    innerRect,
+    points: ringOffsets.map(([ratioX, ratioY]) => ({
+      x: cellRect.x + clampNumber(ratioX + offsetXRatio, 0.05, 0.95) * cellRect.width,
+      y: cellRect.y + clampNumber(ratioY + offsetYRatio, 0.05, 0.95) * cellRect.height,
+    })),
+  };
+}
+
+function getChunkIndexByGridPosition(analysis, chunkCol, chunkRow) {
+  return analysis.chunks.findIndex((chunk) => chunk.chunkCol === chunkCol && chunk.chunkRow === chunkRow);
+}
+
+function getFocusedStats(analysis, focusColorCode) {
+  if (!analysis || !focusColorCode) {
+    return null;
+  }
+
+  const matchedCells = analysis.cells.filter((cell) => cell.code === focusColorCode);
+  return {
+    code: focusColorCode,
+    count: matchedCells.length,
+    chunks: new Set(matchedCells.map((cell) => String(Math.ceil(cell.x / 5)) + "-" + String(Math.ceil(cell.y / 5)))).size,
+  };
+}
+
+function getDimmedColor(rgb, alpha = 0.16) {
+  return `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${alpha})`;
+}
+
+function getMapLayout(width, height, analysis) {
+  const cellSize = Math.min(width / analysis.gridWidth, height / analysis.gridHeight);
+  const offsetX = (width - analysis.gridWidth * cellSize) / 2;
+  const offsetY = (height - analysis.gridHeight * cellSize) / 2;
+  return { cellSize, offsetX, offsetY };
+}
+
+function resolveChunkIndexFromMapPoint(canvas, event, analysis) {
+  if (!canvas || !analysis) {
+    return -1;
+  }
+
+  const rect = canvas.getBoundingClientRect();
+  const clickX = event.clientX - rect.left;
+  const clickY = event.clientY - rect.top;
+  const width = canvas.clientWidth || rect.width || 120;
+  const height = canvas.clientHeight || rect.height || width;
+  const { cellSize, offsetX, offsetY } = getMapLayout(width, height, analysis);
+  const gridX = Math.floor((clickX - offsetX) / cellSize) + 1;
+  const gridY = Math.floor((clickY - offsetY) / cellSize) + 1;
+
+  if (gridX < 1 || gridX > analysis.gridWidth || gridY < 1 || gridY > analysis.gridHeight) {
+    return -1;
+  }
+
+  return getChunkIndexByGridPosition(analysis, Math.ceil(gridX / 5), Math.ceil(gridY / 5));
+}
+
+function resolveGridPositionFromMapPoint(canvas, event, analysis) {
+  if (!canvas || !analysis) {
+    return null;
+  }
+
+  const rect = canvas.getBoundingClientRect();
+  const clickX = event.clientX - rect.left;
+  const clickY = event.clientY - rect.top;
+  const width = canvas.clientWidth || rect.width || 120;
+  const height = canvas.clientHeight || rect.height || width;
+  const { cellSize, offsetX, offsetY } = getMapLayout(width, height, analysis);
+  const gridX = Math.floor((clickX - offsetX) / cellSize) + 1;
+  const gridY = Math.floor((clickY - offsetY) / cellSize) + 1;
+
+  if (gridX < 1 || gridX > analysis.gridWidth || gridY < 1 || gridY > analysis.gridHeight) {
+    return null;
+  }
+
+  return { x: gridX, y: gridY };
+}
+
+function getMarkerPresets() {
+  return {
+    lime: { label: "???", color: "#8bd450" },
+    amber: { label: "??", color: "#ef9c3d" },
+    cyan: { label: "??", color: "#35b9d8" },
+    magenta: { label: "??", color: "#cf5bb6" },
+    violet: { label: "??", color: "#6276ef" },
+  };
+}
+
+function getMarkerTargetCode(state) {
+  if (!state.analysis) {
+    return "";
+  }
+
+  return state.focusColorCode || state.analysis.globalStats[0]?.code || "";
+}
+
+function buildMarkerAnchors(analysis, colorCode) {
+  if (!analysis || !colorCode) {
+    return [];
+  }
+
+  const candidates = analysis.cells.filter((cell) => cell.code === colorCode);
+  if (!candidates.length) {
+    return [];
+  }
+
+  const targetPoints = [
+    { label: "宸︿笂", x: 1, y: 1 },
+    { label: "鍙充笂", x: analysis.gridWidth, y: 1 },
+    { label: "宸︿笅", x: 1, y: analysis.gridHeight },
+    { label: "鍙充笅", x: analysis.gridWidth, y: analysis.gridHeight },
+    { label: "涓績", x: Math.round(analysis.gridWidth / 2), y: Math.round(analysis.gridHeight / 2) },
+  ];
+  const used = new Set();
+
+  return targetPoints
+    .map((target, index) => {
+      let best = null;
+      for (const cell of candidates) {
+        const key = `${cell.x}-${cell.y}`;
+        if (used.has(key)) {
+          continue;
+        }
+
+        const distance = Math.hypot(cell.x - target.x, cell.y - target.y);
+        if (!best || distance < best.distance) {
+          best = { ...cell, distance };
+        }
+      }
+
+      if (!best) {
+        return null;
+      }
+
+      used.add(`${best.x}-${best.y}`);
+      return {
+        index: index + 1,
+        label: target.label,
+        x: best.x,
+        y: best.y,
+        chunkCol: Math.ceil(best.x / 5),
+        chunkRow: Math.ceil(best.y / 5),
+      };
+    })
+    .filter(Boolean);
+}
+
+function injectEnhancementControls() {
+  if (step2Panel && !document.querySelector("#paletteImageInput")) {
+    const paletteTools = document.createElement("div");
+    paletteTools.className = "summary-card";
+    paletteTools.innerHTML = `
+      <h3>鑹插崱鍥剧墖璇嗗埆</h3>
+      <p class="plan-text">涓婁紶棰滆壊鍗℃埅鍥惧悗锛岀郴缁熶細鍏堝皾璇曡瘑鍒瘡涓壊鍧楅噷鐨勮壊鍙锋枃瀛楋紝鍐嶆妸杩欎釜鑹插彿鍜岃鑹插潡鐨勫疄闄呰儗鏅壊缁戝畾鎴愨€滄湰鍥捐壊鍗♀€濄€傝繖鏍峰嵆浣胯繖寮犲浘鍜屾爣鍑嗚壊鍗℃湁鑹插樊锛屽悗缁В鏋愪篃浼氫紭鍏堟寜鏈浘棰滆壊鏉ュ尮閰嶃€?/p>
+      <div class="field-grid" style="margin-top:12px;">
+        <label class="field">
+          <span>瀵煎叆鏂瑰紡</span>
+          <select id="paletteImportModeSelect">
+            <option value="replace">鏇挎崲褰撳墠鑹插崱锛屾寜杩欏紶鍥惧崟鐙垚濂?/option>
+            <option value="merge">鍚堝苟鍒板綋鍓嶈壊鍗?/option>
+          </select>
+        </label>
+        <div class="field">
+          <span>褰撳墠鑹插崱濂楄</span>
+          <p class="empty-text" id="paletteSetNameText">褰撳墠椤圭洰鑹插崱</p>
+        </div>
+      </div>
+      <div class="button-row" style="margin-top:12px;">
+        <button id="extractLegendBtn" type="button">璇嗗埆鍘熷浘搴曢儴鑹插崱</button>
+        <button id="uploadPaletteImageBtn" class="ghost-btn" type="button">涓婁紶棰滆壊鍗″仛鏈浘鏍″噯</button>
+      </div>
+      <input id="paletteImageInput" type="file" accept="image/*" style="display:none;" />
+      <div id="paletteExtractStatus" class="empty-text" style="margin-top:10px;">寤鸿鍏堟湁鑹插彿鍒楄〃锛屽啀涓婁紶棰滆壊鍗℃埅鍥炬牎鍑嗘湰鍥鹃鑹层€?/div>
+      <div class="summary-card" style="margin-top:12px; padding:12px;">
+        <h3>璇嗗埆鏁堟灉棰勮</h3>
+        <p class="plan-text">鍏堢湅宸︿晶鏁村浘妗嗛€夌粨鏋滐紝鍐嶄粠鍙充晶鍒楄〃鐐归€夊崟涓壊鍧椼€傜豢鑹?= 宸茶瘑鍒紝绾㈣壊 = 寰呰ˉ锛岄粍鑹茶櫄绾?= 浣犳鍦ㄦ墜鍔ㄦ閫夌殑鍖哄煙銆傝嫢涓や釜鑹插潡琚瘑鍒垚涓€涓紝鍏堝垹鎺夎妗嗭紝鍐嶉噸鏂版嫋灏忔鎷嗗垎銆傛墜鍔ㄦ閫夐暱鏉¤壊鍗℃椂锛岀郴缁熶細灏介噺鍙粠鐪熸鐨勮壊鍧楀尯鍙栬壊锛屽拷鐣ュ彸渚ф暟閲忓尯銆?/p>
+        <div class="palette-review-layout">
+          <div class="summary-card palette-review-stage">
+            <canvas id="paletteReviewCanvas" aria-label="棰滆壊鍗¤瘑鍒瑙?></canvas>
+          </div>
+          <div class="summary-card palette-review-side">
+            <canvas id="paletteReviewDetailCanvas" aria-label="褰撳墠鑹插潡鏀惧ぇ棰勮"></canvas>
+            <div id="paletteReviewList" class="palette-review-list"></div>
+          </div>
+        </div>
+        <p id="paletteReviewStatus" class="empty-text" style="margin-top:10px;">涓婁紶棰滆壊鍗″悗锛岃繖閲屼細鏄剧ず璇嗗埆鍒扮殑鑹插潡鍜岃壊鍙枫€?/p>
+        <div class="field-grid" style="margin-top:12px;">
+          <label class="field">
+            <span>淇妯″紡</span>
+            <select id="paletteReviewModeSelect">
+              <option value="color-first">棰滆壊浼樺厛锛氭墜濉壊鍙?+ 鍐呴儴鑹插潡鍙栬壊淇濆瓨</option>
+              <option value="ocr-first">鑹插彿浼樺厛锛氳皟鐢ㄥ悗绔?OCR 閲嶈瘑鍒枃瀛?/option>
+            </select>
+          </label>
+          <label class="field">
+            <span>鎵嬪姩鑹插彿</span>
+            <input id="paletteReviewCodeInput" type="text" maxlength="12" placeholder="渚嬪 H9 / C20" list="paletteReviewCodeList" />
+            <datalist id="paletteReviewCodeList"></datalist>
+          </label>
+          <div class="field">
+            <span>鎵嬪姩淇</span>
+            <div class="button-row">
+              <button id="paletteReviewRetryBtn" class="ghost-btn" type="button">鍚庣閲嶈瘑鍒枃瀛?/button>
+              <button id="paletteReviewSaveBtn" type="button">鎶婃閫夋柊寤轰负鑹插崱</button>
+              <button id="paletteReviewDeleteBtn" class="ghost-btn" type="button">鍒犻櫎閫変腑鑹插潡</button>
+              <button id="paletteReviewClearBtn" class="ghost-btn" type="button">娓呴櫎妗嗛€?/button>
+            </div>
+          </div>
+        </div>
+        <div class="field-grid" style="margin-top:12px;">
+          <div class="field">
+            <span>鐪熷疄鍙栬壊</span>
+            <p class="empty-text" id="paletteReviewColorValue">在右侧放大预览上点一下真实底色，保存时会优先使用你手选的颜色。</p>
+          </div>
+          <div class="field">
+            <span>棰滆壊淇</span>
+            <div class="button-row">
+              <button id="paletteReviewResetColorBtn" class="ghost-btn" type="button">娓呴櫎鎵嬮€夐鑹?/button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+    step2Panel.appendChild(paletteTools);
+  }
+
+  if (step3Panel && !document.querySelector("#sampleOverlayToggle")) {
+    const sampleTools = document.createElement("div");
+    sampleTools.className = "summary-card";
+    sampleTools.innerHTML = `
+      <h3>閲囨牱鐐硅皟鏍?/h3>
+      <p class="plan-text">瑙ｆ瀽鍓嶅彲璋冮噰鏍锋銆傛帹鑽愬厛鐪嬩笅闈㈢殑灏忔柟鏍肩ず鎰忓浘锛氬妗嗘槸鍏佽鍙栨牱鍖猴紝鍐呮鏄伩寮€瀛楁瘝鏁板瓧鐨勭閲囧尯銆備篃鍙互鐩存帴鐐圭ず鎰忔牸锛屾寚瀹氫竴涓€滄墍鏈夊皬鏍奸€氱敤鐨勫畨鍏ㄧ偣鈥濄€?/p>
+      <div class="field-grid" style="margin-top:12px;">
+        <label class="field"><span>璧峰 X 鍋忕Щ px</span><input id="gridOffsetXInput" type="number" step="0.2" value="0" inputmode="decimal" /></label>
+        <label class="field"><span>璧峰 Y 鍋忕Щ px</span><input id="gridOffsetYInput" type="number" step="0.2" value="0" inputmode="decimal" /></label>
+        <label class="field"><span>棰勮鏍煎瓙</span><input id="previewCellInput" type="text" value="1,1" placeholder="渚嬪 12,8" /></label>
+      </div>
+      <div class="field-grid" style="margin-top:12px;">
+        <label class="field">
+          <span>鍙栨牱鏂瑰紡</span>
+          <select id="sampleModeSelect">
+            <option value="ring">框环取样</option>
+            <option value="anchor">鍥哄畾瀹夊叏鐐?/option>
+          </select>
+        </label>
+        <label class="field"><span>澶栨鐣欒竟 %</span><input id="sampleOuterMarginInput" type="number" min="2" max="28" step="1" value="10" inputmode="numeric" /></label>
+        <label class="field"><span>鍐呭眰閬垮瓧 %</span><input id="sampleInsetInput" type="number" min="12" max="42" step="1" value="24" inputmode="numeric" /></label>
+      </div>
+      <div class="field-grid" style="margin-top:12px;">
+        <label class="field"><span>X 鍋忕Щ %</span><input id="sampleOffsetXInput" type="number" min="-35" max="35" step="1" value="0" inputmode="numeric" /></label>
+        <label class="field"><span>Y 鍋忕Щ %</span><input id="sampleOffsetYInput" type="number" min="-35" max="35" step="1" value="0" inputmode="numeric" /></label>
+        <div class="field"><span>鍥哄畾瀹夊叏鐐?/span><p class="empty-text" id="sampleAnchorInfo">鐐瑰嚮涓嬫柟绀烘剰鏍艰缃畨鍏ㄧ偣銆?/p></div>
+      </div>
+      <div class="field-grid" style="margin-top:12px;">
+        <label class="field" style="display:flex; align-items:center; gap:10px; padding-top:26px;">
+          <input id="watermarkTextAssistInput" type="checkbox" />
+          <span>鏈夋按鍗版椂鍚敤涓績鏂囧瓧杈呭姪璇嗗埆</span>
+        </label>
+        <label class="field"><span>鍓旈櫎澶栧眰鍦堟暟</span><input id="excludeOuterLayersInput" type="number" min="0" max="8" step="1" value="0" inputmode="numeric" /></label>
+        <div class="field"><span>璇嗗埆绛栫暐</span><p class="empty-text">鍕鹃€夋按鍗版ā寮忓悗锛屼細浼樺厛瀵逛綆缃俊鏍煎惎鐢ㄤ腑蹇冭壊鍙疯瘑鍒紱鍓旈櫎澶栧眰鍚庯紝杈规閭ｅ嚑鍦堜笉浼氬弬涓庣粺璁″拰寤鸿銆?/p></div>
+      </div>
+      <div class="summary-card" style="margin-top:12px; padding:12px;">
+        <canvas id="sampleDemoCanvas" aria-label="閲囨牱绀烘剰鏍?></canvas>
+        <p class="viewer-tip">绀烘剰鏍间腑闂寸殑瀛楀彧鏄紨绀哄共鎵板尯銆傜偣鍑荤ず鎰忔牸鍙缃€滃浐瀹氬畨鍏ㄧ偣鈥濓紝鍚庣画姣忎釜鏍煎瓙閮界敤杩欎釜鐩稿浣嶇疆鍙栬壊銆?/p>
+      </div>
+      <div class="summary-card sampling-inspector-card" style="margin-top:12px;">
+        <h3>?????????</h3>
+        <p class="plan-text">???????????????????????????? = ????????? = ????????? = ?????? = ????????????????????????</p>
+        <div class="field-grid" style="margin-top:12px;">
+          <label class="field">
+            <span>????</span>
+            <select id="sampleInspectWindowSelect">
+              <option value="3">3x3</option>
+              <option value="7">7x7</option>
+              <option value="11">11x11 ????</option>
+            </select>
+          </label>
+          <div class="field">
+            <span>????</span>
+            <p class="empty-text">????????????????????????????????????????</p>
+          </div>
+        </div>
+        <canvas id="sampleInspectCanvas" aria-label="鐪熷疄缃戞牸閲囨牱妫€鏌ュ櫒"></canvas>
+        <div class="sampling-legend">
+          <span><i class="swatch-dot is-cell"></i>褰撳墠鏍?/span>
+          <span><i class="swatch-dot is-outer"></i>鍙栨牱澶栨</span>
+          <span><i class="swatch-dot is-inner"></i>閬垮瓧鍖?/span>
+          <span><i class="swatch-dot is-point"></i>閲囨牱鐐?/span>
+        </div>
+        <p id="sampleInspectStatus" class="empty-text" style="margin-top:10px;">????????????????????</p>
+        <div id="sampleInspectVotes" class="sample-votes-panel"></div>
+      </div>
+      <div class="summary-card seed-assist-card" style="margin-top:12px;">
+        <h3>鍙岀瀛愬鎶楁ā寮?/h3>
+        <p class="plan-text">濡傛灉涓ょ杩戣壊鎬绘槸浜掔浉璇垽锛屽氨鍒嗗埆鎸戝嚑涓€滅洰鏍囪壊鈥濆拰鈥滃鐓ц壊鈥濈殑鐪熷疄鏍煎瓙銆傜郴缁熶細鍚屾椂寤虹珛涓よ竟鐨勬湰鍥惧師鍨嬶紝鍐嶅垽鏂瘡涓€鏍煎埌搴曟洿鍍忓摢涓€杈癸紝鑰屼笉鏄彧鐪嬪崟涓洰鏍囥€?/p>
+        <div class="field-grid" style="margin-top:12px;">
+          <label class="field">
+            <span>鐩爣鑹插彿</span>
+            <select id="seedTargetCodeSelect"></select>
+          </label>
+          <label class="field">
+            <span>瀵圭収鑹插彿</span>
+            <select id="seedContrastCodeSelect"></select>
+          </label>
+          <label class="field">
+            <span>鐩歌繎闃堝€?/span>
+            <input id="seedThresholdInput" type="number" min="2" max="20" step="0.5" value="8" inputmode="decimal" />
+          </label>
+        </div>
+        <div class="button-row" style="margin-top:12px;">
+          <button id="seedAddTargetBtn" class="ghost-btn" type="button">鎶婂綋鍓嶆牸鍔犲叆鐩爣绉嶅瓙</button>
+          <button id="seedAddContrastBtn" class="ghost-btn" type="button">鎶婂綋鍓嶆牸鍔犲叆瀵圭収绉嶅瓙</button>
+          <button id="seedAnalyzeBtn" type="button">鍒嗘瀽瀵规姉鍊欓€?/button>
+        </div>
+        <div class="button-row" style="margin-top:12px;">
+          <button id="seedApplyBtn" type="button">鎵归噺淇鍊欓€?/button>
+          <button id="seedClearBtn" class="ghost-btn" type="button">娓呯┖绉嶅瓙</button>
+          <button id="seedResetOverridesBtn" class="ghost-btn" type="button">娓呯┖鎵归噺淇</button>
+        </div>
+        <p id="seedStatus" class="empty-text" style="margin-top:10px;">鍏堣В鏋愭暣鍥撅紝鐒跺悗鎶婂嚑涓綘纭畾鐨勬牸瀛愬姞鍏ョ瀛愩€?/p>
+        <div class="seed-layout">
+          <div>
+            <h4>鐩爣绉嶅瓙</h4>
+            <div id="seedTargetList" class="seed-list"></div>
+          </div>
+          <div>
+            <h4>瀵圭収绉嶅瓙</h4>
+            <div id="seedContrastList" class="seed-list"></div>
+          </div>
+          <div>
+            <h4>瀵规姉鍊欓€?/h4>
+            <div id="seedCandidateList" class="seed-list"></div>
+          </div>
+        </div>
+      </div>
+      <div class="field-grid" style="margin-top:12px;">
+        <label class="field"><span>鍗曟牸瀹藉害 %</span><input id="cellWidthScaleInput" type="number" min="75" max="125" step="1" value="100" inputmode="numeric" /></label>
+        <label class="field"><span>鍗曟牸楂樺害 %</span><input id="cellHeightScaleInput" type="number" min="75" max="125" step="1" value="100" inputmode="numeric" /></label>
+        <div class="field">
+          <span>鎵嬪姩瀵归綈</span>
+          <div class="button-row">
+            <button id="resetAlignmentBtn" class="ghost-btn" type="button">閲嶇疆瀵归綈</button>
+          </div>
+        </div>
+      </div>
+      <div class="button-row" style="margin-top:12px;">
+        <button id="sampleOverlayToggle" class="ghost-btn" type="button">闅愯棌閲囨牱鐐?/button>
+      </div>
+    `;
+    analyzeBtn.parentElement?.insertAdjacentElement("afterend", sampleTools);
+  }
+
+  if (step4Panel && !document.querySelector("#markerPresetSelect")) {
+    const markerTools = document.createElement("div");
+    markerTools.className = "summary-card";
+    markerTools.style.marginTop = "12px";
+    markerTools.innerHTML = `
+      <h3>瀹氫綅鏍囪鑹?/h3>
+      <p class="plan-text">褰撴煇涓鑹插湪澶у浘閲屼笉濂芥壘鏃讹紝鍙厛鍦ㄥ洓瑙掑拰涓績鎸戝嚭鍑犱釜瀹氫綅鐐癸紝鐢ㄤ复鏃舵浛浠ｈ壊鍗犱綅锛屾渶鍚庡啀鎹㈠洖鍥剧焊鍘熻壊銆?/p>
+      <div class="field-grid" style="margin-top:12px;">
+        <label class="field">
+          <span>涓存椂鏍囪鑹?/span>
+          <select id="markerPresetSelect">
+            <option value="lime">鑽у厜缁?/option>
+            <option value="amber">浜</option>
+            <option value="cyan">婀栬摑</option>
+            <option value="magenta">鐜孩</option>
+            <option value="violet">绱摑</option>
+          </select>
+        </label>
+        <div class="field">
+          <span>瀹氫綅寤鸿</span>
+          <p class="empty-text" id="markerSummary">鍏堝湪鈥滄暣浣撳ぇ鍥炬ā寮忊€濋噷閫変竴涓鑹诧紝杩欓噷浼氳嚜鍔ㄧ粰鍑哄洓瑙掑姞涓績鐨勫畾浣嶇偣銆?/p>
+        </div>
+      </div>
+    `;
+    step4Panel.appendChild(markerTools);
+  }
+
+  paletteImageInput = document.querySelector("#paletteImageInput");
+  extractLegendBtn = document.querySelector("#extractLegendBtn");
+  uploadPaletteImageBtn = document.querySelector("#uploadPaletteImageBtn");
+  paletteReviewCanvas = document.querySelector("#paletteReviewCanvas");
+  paletteReviewCtx = paletteReviewCanvas?.getContext("2d") || null;
+  paletteReviewDetailCanvas = document.querySelector("#paletteReviewDetailCanvas");
+  paletteReviewDetailCtx = paletteReviewDetailCanvas?.getContext("2d") || null;
+  paletteReviewList = document.querySelector("#paletteReviewList");
+  paletteReviewStatus = document.querySelector("#paletteReviewStatus");
+  paletteReviewModeSelect = document.querySelector("#paletteReviewModeSelect");
+  paletteReviewCodeInput = document.querySelector("#paletteReviewCodeInput");
+  paletteReviewRetryBtn = document.querySelector("#paletteReviewRetryBtn");
+  paletteReviewSaveBtn = document.querySelector("#paletteReviewSaveBtn");
+  paletteReviewDeleteBtn = document.querySelector("#paletteReviewDeleteBtn");
+  paletteReviewClearBtn = document.querySelector("#paletteReviewClearBtn");
+  paletteReviewColorValue = document.querySelector("#paletteReviewColorValue");
+  paletteReviewResetColorBtn = document.querySelector("#paletteReviewResetColorBtn");
+  paletteImportModeSelect = document.querySelector("#paletteImportModeSelect");
+  paletteSetNameText = document.querySelector("#paletteSetNameText");
+  sampleOverlayToggle = document.querySelector("#sampleOverlayToggle");
+  sampleModeSelect = document.querySelector("#sampleModeSelect");
+  sampleOuterMarginInput = document.querySelector("#sampleOuterMarginInput");
+  sampleInsetInput = document.querySelector("#sampleInsetInput");
+  sampleOffsetXInput = document.querySelector("#sampleOffsetXInput");
+  sampleOffsetYInput = document.querySelector("#sampleOffsetYInput");
+  watermarkTextAssistInput = document.querySelector("#watermarkTextAssistInput");
+  excludeOuterLayersInput = document.querySelector("#excludeOuterLayersInput");
+  sampleAnchorInfo = document.querySelector("#sampleAnchorInfo");
+  sampleDemoCanvas = document.querySelector("#sampleDemoCanvas");
+  sampleDemoCtx = sampleDemoCanvas?.getContext("2d") || null;
+  sampleInspectCanvas = document.querySelector("#sampleInspectCanvas");
+  sampleInspectCtx = sampleInspectCanvas?.getContext("2d") || null;
+  sampleInspectWindowSelect = document.querySelector("#sampleInspectWindowSelect");
+  sampleInspectStatus = document.querySelector("#sampleInspectStatus");
+  sampleInspectVotes = document.querySelector("#sampleInspectVotes");
+  seedTargetCodeSelect = document.querySelector("#seedTargetCodeSelect");
+  seedContrastCodeSelect = document.querySelector("#seedContrastCodeSelect");
+  seedThresholdInput = document.querySelector("#seedThresholdInput");
+  seedAddTargetBtn = document.querySelector("#seedAddTargetBtn");
+  seedAddContrastBtn = document.querySelector("#seedAddContrastBtn");
+  seedAnalyzeBtn = document.querySelector("#seedAnalyzeBtn");
+  seedApplyBtn = document.querySelector("#seedApplyBtn");
+  seedClearBtn = document.querySelector("#seedClearBtn");
+  seedResetOverridesBtn = document.querySelector("#seedResetOverridesBtn");
+  seedStatus = document.querySelector("#seedStatus");
+  seedTargetList = document.querySelector("#seedTargetList");
+  seedContrastList = document.querySelector("#seedContrastList");
+  seedCandidateList = document.querySelector("#seedCandidateList");
+  gridOffsetXInput = document.querySelector("#gridOffsetXInput");
+  gridOffsetYInput = document.querySelector("#gridOffsetYInput");
+  cellWidthScaleInput = document.querySelector("#cellWidthScaleInput");
+  cellHeightScaleInput = document.querySelector("#cellHeightScaleInput");
+  previewCellInput = document.querySelector("#previewCellInput");
+  resetAlignmentBtn = document.querySelector("#resetAlignmentBtn");
+  markerPresetSelect = document.querySelector("#markerPresetSelect");
+  markerSummary = document.querySelector("#markerSummary");
+}
+
+function initDefaultPalette() {
+  if (getState().palette.length || !window.PINDOU_COLORS?.length) {
+    return;
+  }
+
+  patchState({
+    palette: window.PINDOU_COLORS.map((entry) => ({
+      code: entry.code,
+      rgb: hexToRgb(entry.hex),
+    })),
+  });
+}
+
+function renderStatList(stats, emptyText) {
+  if (!stats.length) {
+    return `<p class="empty-text">${emptyText}</p>`;
+  }
+
+  return `
+    <div class="stat-list">
+      ${stats
+        .map(
+          (item) => `
+            <div class="stat-row">
+              <span><code>${item.code}</code></span>
+              <strong>${item.count} pcs</strong>
+            </div>
+          `,
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function drawSampleDemo() {
+  if (!sampleDemoCanvas || !sampleDemoCtx) {
+    return;
+  }
+
+  ensureCanvasSize(sampleDemoCanvas, 180, 180);
+  const ctx = sampleDemoCtx;
+  const state = getState();
+  const cellRect = { x: 24, y: 24, width: 132, height: 132 };
+  const { outerRect, innerRect, points } = buildSamplingPreviewPoints(cellRect, state.sampling);
+  const textRect = getTextAssistRect(cellRect);
+
+  ctx.clearRect(0, 0, 180, 180);
+  ctx.fillStyle = "#fffaf4";
+  ctx.fillRect(0, 0, 180, 180);
+  ctx.fillStyle = "#f1a7b5";
+  ctx.fillRect(cellRect.x, cellRect.y, cellRect.width, cellRect.height);
+  ctx.strokeStyle = "rgba(48, 33, 22, 0.2)";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(cellRect.x, cellRect.y, cellRect.width, cellRect.height);
+
+  ctx.fillStyle = "rgba(92, 34, 53, 0.85)";
+  ctx.font = "800 30px 'Segoe UI'";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("H2", cellRect.x + cellRect.width / 2, cellRect.y + cellRect.height / 2);
+
+  ctx.strokeStyle = "rgba(75, 171, 114, 0.95)";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(outerRect.x, outerRect.y, outerRect.width, outerRect.height);
+  ctx.strokeStyle = "rgba(44, 196, 198, 0.95)";
+  ctx.setLineDash([6, 4]);
+  ctx.strokeRect(innerRect.x, innerRect.y, innerRect.width, innerRect.height);
+  ctx.setLineDash([]);
+  if (state.recognition?.watermarkTextAssist) {
+    ctx.strokeStyle = "rgba(186, 90, 214, 0.95)";
+    ctx.setLineDash([4, 4]);
+    ctx.strokeRect(textRect.x, textRect.y, textRect.width, textRect.height);
+    ctx.setLineDash([]);
+  }
+
+  for (const point of points) {
+    ctx.fillStyle = state.sampling.mode === "anchor" ? "#9d5333" : "rgba(44, 196, 198, 0.95)";
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, state.sampling.mode === "anchor" ? 5 : 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.fillStyle = "#745f4b";
+  ctx.font = "600 11px 'Segoe UI'";
+  ctx.textAlign = "left";
+  ctx.fillText("?? = ????", 8, 14);
+  ctx.fillText("?? = ????", 8, 168);
+  if (state.recognition?.watermarkTextAssist) {
+    ctx.fillText("?? = ???????", 56, 168);
+  }
+}
+
+function getCellAnalysis(state, cellX, cellY) {
+  return state.analysis?.cells?.find((cell) => cell.x === cellX && cell.y === cellY) || null;
+}
+
+function drawInspectorMessage(width, height, message) {
+  if (!sampleInspectCtx) {
+    return;
+  }
+  sampleInspectCtx.clearRect(0, 0, width, height);
+  sampleInspectCtx.fillStyle = "#fffdf8";
+  sampleInspectCtx.fillRect(0, 0, width, height);
+  sampleInspectCtx.fillStyle = "#6f6257";
+  sampleInspectCtx.font = "600 15px 'Segoe UI'";
+  sampleInspectCtx.fillText(message, 16, 28);
+}
+
+function renderSampleVotePanel(cellAnalysis) {
+  if (!sampleInspectVotes) {
+    return;
+  }
+
+  if (!cellAnalysis) {
+    sampleInspectVotes.innerHTML = `<p class="empty-text">??????????????????????</p>`;
+    return;
+  }
+
+  const votes = (cellAnalysis.voteBreakdown || []).slice(0, 6);
+  const pointCount = cellAnalysis.samplePoints?.length || 0;
+  const sampledRgbText = formatRgb(cellAnalysis.sampledRgb || [0, 0, 0]);
+  const textAssistText = cellAnalysis.textAssist
+    ? ` ? ?? ${cellAnalysis.textAssist.code} ${cellAnalysis.textAssist.applied ? "???" : "??"} ${(cellAnalysis.textAssist.score || 0).toFixed(2)}`
+    : "";
+
+  sampleInspectVotes.innerHTML = `
+    <div class="sample-votes-head">
+      <strong>???????</strong>
+      <span class="empty-text">閲囨牱鐐?${pointCount} 涓?路 绋冲畾 RGB ${sampledRgbText}${textAssistText}</span>
+    </div>
+    ${
+      votes.length
+        ? `<div class="sample-votes-list">
+            ${votes
+              .map(
+                (vote) => `
+                  <div class="sample-vote-row ${vote.code === cellAnalysis.code ? "is-winner" : ""}">
+                    <div class="sample-vote-main">
+                      <span class="sample-vote-swatch" style="background:${rgbToHex(vote.matchedRgb)}"></span>
+                      <strong><code>${vote.code}</code></strong>
+                    </div>
+                    <span>${vote.count} 绁?/span>
+                    <span>${Math.round(vote.ratio * 100)}%</span>
+                    <span>璺?${vote.averageDistance.toFixed(1)}</span>
+                  </div>
+                `,
+              )
+              .join("")}
+          </div>`
+        : `<p class="empty-text">褰撳墠鏍艰繕娌℃湁鍙敤鎶曠エ鏁版嵁銆?/p>`
+    }
+  `;
+}
+
+function getCellKey(x, y) {
+  return `${x},${y}`;
+}
+
+function medianChannel(values) {
+  const sorted = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 1) {
+    return sorted[middle];
+  }
+  return Math.round((sorted[middle - 1] + sorted[middle]) / 2);
+}
+
+function medianRgbList(rgbList) {
+  if (!rgbList.length) {
+    return [0, 0, 0];
+  }
+  return [0, 1, 2].map((channel) => medianChannel(rgbList.map((rgb) => rgb[channel])));
+}
+
+function rerunAnalysisWithCurrentState(nextOverrides = getState().manualOverrides) {
+  const state = getState();
+  if (!state.originalCanvas || !state.crop || !state.palette.length) {
+    return null;
+  }
+
+  return analyzeGrid({
+    originalCanvas: state.originalCanvas,
+    crop: state.crop,
+    gridSize: state.gridSize,
+    palette: state.palette,
+    sampling: state.sampling,
+    recognition: state.recognition,
+    gridAlignment: state.gridAlignment,
+    overrides: nextOverrides,
+  });
+}
+
+function buildSeedTargetOptions() {
+  const state = getState();
+  const codes = new Set(state.palette.map((entry) => entry.code));
+  for (const item of state.analysis?.globalStats || []) {
+    codes.add(item.code);
+  }
+  return [...codes].sort((left, right) => left.localeCompare(right));
+}
+
+function getSeedCellsByType(type, state = getState()) {
+  if (!state.analysis) {
+    return [];
+  }
+  const seeds = type === "contrast" ? state.seedAssist?.contrastSeeds || [] : state.seedAssist?.targetSeeds || [];
+  return seeds
+    .map((seed) => state.analysis.cells.find((cell) => cell.x === seed.x && cell.y === seed.y))
+    .filter(Boolean);
+}
+
+function renderSeedAssistPanel() {
+  const state = getState();
+  const seedAssist = state.seedAssist || {};
+  const targetOptions = buildSeedTargetOptions();
+  const targetSeeds = getSeedCellsByType("target", state);
+  const contrastSeeds = getSeedCellsByType("contrast", state);
+  const hasBothCodes =
+    Boolean(seedAssist.targetCode) &&
+    Boolean(seedAssist.contrastCode) &&
+    seedAssist.targetCode !== seedAssist.contrastCode;
+
+  if (seedTargetCodeSelect) {
+    seedTargetCodeSelect.innerHTML = [
+      `<option value="">璇烽€夋嫨鐩爣鑹插彿</option>`,
+      ...targetOptions.map((code) => `<option value="${code}">${code}</option>`),
+    ].join("");
+    seedTargetCodeSelect.value = seedAssist.targetCode || "";
+  }
+
+  if (seedContrastCodeSelect) {
+    seedContrastCodeSelect.innerHTML = [
+      `<option value="">璇烽€夋嫨瀵圭収鑹插彿</option>`,
+      ...targetOptions.map((code) => `<option value="${code}">${code}</option>`),
+    ].join("");
+    seedContrastCodeSelect.value = seedAssist.contrastCode || "";
+  }
+
+  if (seedThresholdInput && document.activeElement !== seedThresholdInput) {
+    seedThresholdInput.value = String(seedAssist.threshold ?? 8);
+  }
+
+  if (seedAddTargetBtn) {
+    seedAddTargetBtn.disabled = !state.analysis || !seedAssist.targetCode;
+  }
+  if (seedAddContrastBtn) {
+    seedAddContrastBtn.disabled = !state.analysis || !seedAssist.contrastCode;
+  }
+  if (seedAnalyzeBtn) {
+    seedAnalyzeBtn.disabled = !state.analysis || !hasBothCodes || !targetSeeds.length || !contrastSeeds.length;
+  }
+  if (seedApplyBtn) {
+    seedApplyBtn.disabled = !state.analysis || !(seedAssist.candidates || []).some((item) => item.currentCode !== item.targetCode);
+  }
+  if (seedResetOverridesBtn) {
+    seedResetOverridesBtn.disabled = !Object.keys(state.manualOverrides || {}).length;
+  }
+
+  if (seedTargetList) {
+    seedTargetList.innerHTML = targetSeeds.length
+      ? targetSeeds
+          .map(
+            (cell, index) => `
+              <button type="button" class="seed-item" data-seed-type="target" data-seed-index="${index}">
+                <span><code>${seedAssist.targetCode || cell.code}</code> 路 (${cell.x},${cell.y})</span>
+                <small>${formatRgb(cell.sampledRgb)}</small>
+              </button>
+            `,
+          )
+          .join("")
+      : `<p class="empty-text">????????????????? ${seedAssist.targetCode || "???"} ????</p>`;
+  }
+
+  if (seedContrastList) {
+    seedContrastList.innerHTML = contrastSeeds.length
+      ? contrastSeeds
+          .map(
+            (cell, index) => `
+              <button type="button" class="seed-item" data-seed-type="contrast" data-seed-index="${index}">
+                <span><code>${seedAssist.contrastCode || cell.code}</code> 路 (${cell.x},${cell.y})</span>
+                <small>${formatRgb(cell.sampledRgb)}</small>
+              </button>
+            `,
+          )
+          .join("")
+      : `<p class="empty-text">????????????????? ${seedAssist.contrastCode || "???"} ????</p>`;
+  }
+
+  if (seedCandidateList) {
+    const candidates = seedAssist.candidates || [];
+    seedCandidateList.innerHTML = candidates.length
+      ? candidates
+          .slice(0, 24)
+          .map(
+            (item, index) => {
+              const targetDistance = Number.isFinite(item.targetDistance) ? item.targetDistance : Number.isFinite(item.distance) ? item.distance : 999;
+              const contrastDistance = Number.isFinite(item.contrastDistance) ? item.contrastDistance : 999;
+              const margin = Number.isFinite(item.margin) ? item.margin : 0;
+              const targetVoteRatio = Number.isFinite(item.targetVoteRatio) ? item.targetVoteRatio : 0;
+              const contrastVoteRatio = Number.isFinite(item.contrastVoteRatio) ? item.contrastVoteRatio : 0;
+              const neighborSupport = Number.isFinite(item.neighborSupport) ? item.neighborSupport : 0;
+              return `
+              <button type="button" class="seed-item ${item.currentCode !== item.targetCode ? "is-suggested" : ""}" data-seed-candidate-index="${index}">
+                <span><code>(${item.x},${item.y})</code> ${item.currentCode} -> ${item.targetCode}</span>
+                <small>T ${targetDistance.toFixed(2)} / C ${contrastDistance.toFixed(2)} ? ?? +${margin.toFixed(2)} ? ??? ${(targetVoteRatio * 100).toFixed(0)}% ? ??? ${(contrastVoteRatio * 100).toFixed(0)}% ? ?? ${neighborSupport}</small>
+              </button>
+            `;
+            },
+          )
+          .join("")
+      : `<p class="empty-text">??????????????????????????????</p>`;
+  }
+
+  if (seedStatus) {
+    const candidateCount = seedAssist.candidates?.length || 0;
+    const overrideCount = Object.keys(state.manualOverrides || {}).length;
+    if (!hasBothCodes && seedAssist.targetCode && seedAssist.contrastCode && seedAssist.targetCode === seedAssist.contrastCode) {
+      seedStatus.textContent = `???????????????????????????? ${overrideCount} ??`;
+      return;
+    }
+    seedStatus.textContent = seedAssist.targetPrototypeRgb && seedAssist.contrastPrototypeRgb
+      ? `?? ${seedAssist.targetCode} ? ${targetSeeds.length} ??? ? ?? RGB ${formatRgb(seedAssist.targetPrototypeRgb)}??? ${seedAssist.contrastCode} ? ${contrastSeeds.length} ??? ? ?? RGB ${formatRgb(seedAssist.contrastPrototypeRgb)}????? ${candidateCount} ??????? ${overrideCount} ??`
+      : `????????????? ${seedAssist.targetCode || "??"} ???? ${seedAssist.contrastCode || "??"} ???????????????????? ${overrideCount} ??`;
+  }
+}
+
+function addCurrentCellAsSeed(type = "target") {
+  const state = getState();
+  const seedCode = type === "contrast" ? state.seedAssist?.contrastCode || "" : state.seedAssist?.targetCode || "";
+  if (!state.analysis || !seedCode) {
+    return;
+  }
+
+  const cell = state.analysis.cells.find(
+    (item) => item.x === state.selectedPreviewCell?.x && item.y === state.selectedPreviewCell?.y,
+  );
+  if (!cell || cell.excluded) {
+    return;
+  }
+
+  const seedKey = type === "contrast" ? "contrastSeeds" : "targetSeeds";
+  const prototypeKey = type === "contrast" ? "contrastPrototypeRgb" : "targetPrototypeRgb";
+  const nextSeeds = [...(state.seedAssist?.[seedKey] || [])];
+  if (!nextSeeds.some((seed) => seed.x === cell.x && seed.y === cell.y)) {
+    nextSeeds.push({ x: cell.x, y: cell.y });
+  }
+
+  patchState({
+    seedAssist: {
+      ...state.seedAssist,
+      [seedKey]: nextSeeds,
+      candidates: [],
+      [prototypeKey]: null,
+    },
+  });
+}
+
+function analyzeSeedCandidates() {
+  const state = getState();
+  const targetCode = state.seedAssist?.targetCode || "";
+  const contrastCode = state.seedAssist?.contrastCode || "";
+  if (!state.analysis || !targetCode || !contrastCode || targetCode === contrastCode) {
+    return;
+  }
+
+  const targetSeedCells = getSeedCellsByType("target", state);
+  const contrastSeedCells = getSeedCellsByType("contrast", state);
+  if (!targetSeedCells.length || !contrastSeedCells.length) {
+    return;
+  }
+
+  const threshold = Number(state.seedAssist?.threshold || 8);
+  const targetPrototypeRgb = medianRgbList(targetSeedCells.map((cell) => cell.sampledRgb));
+  const contrastPrototypeRgb = medianRgbList(contrastSeedCells.map((cell) => cell.sampledRgb));
+  const paletteByCode = new Map(state.palette.map((entry) => [entry.code, entry.rgb]));
+  const targetSeedKeySet = new Set(targetSeedCells.map((cell) => getCellKey(cell.x, cell.y)));
+  const contrastSeedKeySet = new Set(contrastSeedCells.map((cell) => getCellKey(cell.x, cell.y)));
+  const preliminary = state.analysis.cells.map((cell) => {
+    if (cell.excluded) {
+      return {
+        cell,
+        targetDistance: Number.POSITIVE_INFINITY,
+        contrastDistance: Number.POSITIVE_INFINITY,
+        margin: Number.NEGATIVE_INFINITY,
+        currentAssignedDistance: Number.POSITIVE_INFINITY,
+        currentImprovement: Number.NEGATIVE_INFINITY,
+        targetVoteRatio: 0,
+        contrastVoteRatio: 0,
+      };
+    }
+    const targetDistance = getPerceptualDistance(cell.sampledRgb, targetPrototypeRgb);
+    const contrastDistance = getPerceptualDistance(cell.sampledRgb, contrastPrototypeRgb);
+    const currentRgb = paletteByCode.get(cell.code) || cell.matchedRgb;
+    const currentAssignedDistance = getPerceptualDistance(cell.sampledRgb, currentRgb);
+    const targetVote = (cell.voteBreakdown || []).find((item) => item.code === targetCode);
+    const contrastVote = (cell.voteBreakdown || []).find((item) => item.code === contrastCode);
+    return {
+      cell,
+      targetDistance,
+      contrastDistance,
+      margin: contrastDistance - targetDistance,
+      currentAssignedDistance,
+      currentImprovement: currentAssignedDistance - targetDistance,
+      targetVoteRatio: targetVote?.ratio || 0,
+      contrastVoteRatio: contrastVote?.ratio || 0,
+    };
+  });
+  const targetAffinityMap = new Map(
+    preliminary.map((item) => [
+      getCellKey(item.cell.x, item.cell.y),
+      item.margin >= 0.8 && item.targetDistance <= threshold * 1.15,
+    ]),
+  );
+
+  const candidates = preliminary
+    .map((entry) => {
+      const { cell, targetDistance, contrastDistance, margin, currentAssignedDistance, currentImprovement, targetVoteRatio, contrastVoteRatio } = entry;
+      const neighborKeys = [
+        getCellKey(cell.x - 1, cell.y),
+        getCellKey(cell.x + 1, cell.y),
+        getCellKey(cell.x, cell.y - 1),
+        getCellKey(cell.x, cell.y + 1),
+      ];
+      const neighborSupport = neighborKeys.filter((key) => targetAffinityMap.get(key)).length;
+      const nearTargetSeed = targetSeedCells.some((seedCell) => Math.abs(seedCell.x - cell.x) + Math.abs(seedCell.y - cell.y) <= 1);
+      const voteLead = targetVoteRatio - contrastVoteRatio;
+      const strongTargetEvidence = cell.code === targetCode || targetVoteRatio >= 0.2 || currentImprovement >= 1;
+      const continuityGate = neighborSupport >= 1 || targetVoteRatio >= 0.34 || nearTargetSeed;
+      const contrastBlock =
+        cell.code === contrastCode &&
+        (margin < Math.max(2.2, threshold * 0.28) || voteLead < 0.12 || targetDistance > threshold * 0.78);
+      const pass =
+        targetDistance <= threshold &&
+        margin >= Math.max(1.1, threshold * 0.14) &&
+        voteLead >= -0.02 &&
+        strongTargetEvidence &&
+        continuityGate &&
+        !contrastBlock &&
+        !contrastSeedKeySet.has(getCellKey(cell.x, cell.y));
+      return {
+        x: cell.x,
+        y: cell.y,
+        currentCode: cell.code,
+        targetCode,
+        contrastCode,
+        targetDistance,
+        contrastDistance,
+        margin,
+        neighborSupport,
+        targetVoteRatio,
+        contrastVoteRatio,
+        currentAssignedDistance,
+        improvement: currentImprovement,
+        voteLead,
+        isTargetSeed: targetSeedKeySet.has(getCellKey(cell.x, cell.y)),
+        isContrastSeed: contrastSeedKeySet.has(getCellKey(cell.x, cell.y)),
+        pass,
+      };
+    })
+    .filter(
+      (item) =>
+        item.isTargetSeed || item.pass,
+    )
+    .sort(
+      (left, right) =>
+        Number(right.isTargetSeed) - Number(left.isTargetSeed) ||
+        right.margin - left.margin ||
+        right.targetVoteRatio - left.targetVoteRatio ||
+        right.improvement - left.improvement ||
+        left.targetDistance - right.targetDistance,
+    );
+
+  patchState({
+    seedAssist: {
+      ...state.seedAssist,
+      targetPrototypeRgb,
+      contrastPrototypeRgb,
+      candidates,
+    },
+  });
+}
+
+function applySeedCandidates() {
+  const state = getState();
+  const targetCode = state.seedAssist?.targetCode || "";
+  const candidates = state.seedAssist?.candidates || [];
+  if (!state.analysis || !targetCode || !candidates.length) {
+    return;
+  }
+
+  const nextOverrides = { ...(state.manualOverrides || {}) };
+  for (const item of candidates) {
+    if (item.currentCode !== targetCode) {
+      nextOverrides[getCellKey(item.x, item.y)] = targetCode;
+    }
+  }
+
+  const nextAnalysis = rerunAnalysisWithCurrentState(nextOverrides);
+  if (!nextAnalysis) {
+    return;
+  }
+
+  patchState({
+    manualOverrides: nextOverrides,
+    analysis: nextAnalysis,
+    currentChunkIndex: 0,
+    seedAssist: {
+      ...state.seedAssist,
+      candidates: candidates.map((item) => ({ ...item, currentCode: targetCode })),
+    },
+  });
+}
+
+function clearManualOverrides() {
+  const nextAnalysis = rerunAnalysisWithCurrentState({});
+  patchState({
+    manualOverrides: {},
+    analysis: nextAnalysis,
+    currentChunkIndex: 0,
+  });
+}
+
+function drawRealSamplingInspector() {
+  if (!sampleInspectCanvas || !sampleInspectCtx) {
+    return;
+  }
+
+  const state = getState();
+  const inspectWindow = Math.max(3, Number.parseInt(state.sampleInspectWindow || 3, 10) || 3);
+  const inspectRadius = Math.floor(inspectWindow / 2);
+  const width = sampleInspectCanvas.clientWidth || 320;
+  const height = Math.max(280, Math.min(inspectWindow >= 11 ? 640 : 540, Math.round(width * (inspectWindow >= 11 ? 1.02 : inspectWindow >= 7 ? 0.95 : 0.88))));
+  ensureCanvasSize(sampleInspectCanvas, width, height);
+  sampleInspectHitRegions = [];
+  sampleInspectOverlay = null;
+  if (!state.image.element || !state.crop || !state.cropConfirmed) {
+    drawInspectorMessage(width, height, "?????????????????????");
+    if (sampleInspectStatus) {
+      sampleInspectStatus.textContent = "先上传图片并确认裁剪，然后再用这个检查器看真实采样位置。";
+    }
+    renderSampleVotePanel(null);
+    return;
+  }
+
+  const selected = clampPreviewCell(state.selectedPreviewCell, state.gridSize);
+  const cells = [];
+  for (let cellY = Math.max(1, selected.y - inspectRadius); cellY <= Math.min(state.gridSize.height, selected.y + inspectRadius); cellY += 1) {
+    for (let cellX = Math.max(1, selected.x - inspectRadius); cellX <= Math.min(state.gridSize.width, selected.x + inspectRadius); cellX += 1) {
+      const rect = getCellRectByIndex(state, cellX, cellY);
+      if (!rect) {
+        continue;
+      }
+      cells.push({ x: cellX, y: cellY, rect, analysis: getCellAnalysis(state, cellX, cellY) });
+    }
+  }
+
+  if (!cells.length) {
+    drawInspectorMessage(width, height, "???????????????????????");
+    if (sampleInspectStatus) {
+      sampleInspectStatus.textContent = "当前预览格无法映射到有效网格，请调一下裁剪、偏移或单格比例。";
+    }
+    renderSampleVotePanel(null);
+    return;
+  }
+
+  const bounds = cells.reduce(
+    (acc, item) => ({
+      x: Math.min(acc.x, item.rect.x),
+      y: Math.min(acc.y, item.rect.y),
+      right: Math.max(acc.right, item.rect.x + item.rect.width),
+      bottom: Math.max(acc.bottom, item.rect.y + item.rect.height),
+    }),
+    { x: Number.POSITIVE_INFINITY, y: Number.POSITIVE_INFINITY, right: Number.NEGATIVE_INFINITY, bottom: Number.NEGATIVE_INFINITY },
+  );
+  const sourceWidth = Math.max(1, bounds.right - bounds.x);
+  const sourceHeight = Math.max(1, bounds.bottom - bounds.y);
+  const padding = 18;
+  const labelBand = 34;
+  const scale = Math.min((width - padding * 2) / sourceWidth, (height - padding * 2 - labelBand) / sourceHeight);
+  const drawWidth = sourceWidth * scale;
+  const drawHeight = sourceHeight * scale;
+  const offsetX = (width - drawWidth) / 2;
+  const offsetY = labelBand + (height - labelBand - drawHeight) / 2;
+
+  sampleInspectCtx.clearRect(0, 0, width, height);
+  sampleInspectCtx.fillStyle = "#fffdf8";
+  sampleInspectCtx.fillRect(0, 0, width, height);
+  sampleInspectCtx.drawImage(
+    state.image.element,
+    bounds.x,
+    bounds.y,
+    sourceWidth,
+    sourceHeight,
+    offsetX,
+    offsetY,
+    drawWidth,
+    drawHeight,
+  );
+
+  sampleInspectCtx.strokeStyle = "rgba(48, 33, 22, 0.18)";
+  sampleInspectCtx.lineWidth = 1;
+
+  for (const item of cells) {
+    const drawX = offsetX + (item.rect.x - bounds.x) * scale;
+    const drawY = offsetY + (item.rect.y - bounds.y) * scale;
+    const drawW = item.rect.width * scale;
+    const drawH = item.rect.height * scale;
+    sampleInspectCtx.strokeRect(drawX, drawY, drawW, drawH);
+    sampleInspectHitRegions.push({ x: item.x, y: item.y, drawX, drawY, drawW, drawH });
+
+    if (item.x === selected.x && item.y === selected.y) {
+      sampleInspectCtx.fillStyle = "rgba(244, 198, 79, 0.18)";
+      sampleInspectCtx.fillRect(drawX, drawY, drawW, drawH);
+      sampleInspectCtx.strokeStyle = "rgba(244, 198, 79, 0.96)";
+      sampleInspectCtx.lineWidth = 3;
+      sampleInspectCtx.strokeRect(drawX, drawY, drawW, drawH);
+      sampleInspectCtx.strokeStyle = "rgba(48, 33, 22, 0.18)";
+      sampleInspectCtx.lineWidth = 1;
+    }
+
+    sampleInspectCtx.fillStyle = "rgba(48, 33, 22, 0.72)";
+    sampleInspectCtx.font = `700 ${Math.max(10, Math.min(14, Math.floor(Math.min(drawW, drawH) * 0.18)))}px 'Segoe UI'`;
+    sampleInspectCtx.textAlign = "left";
+    sampleInspectCtx.textBaseline = "top";
+    sampleInspectCtx.fillText(`${item.x},${item.y}`, drawX + 4, drawY + 4);
+  }
+
+  const selectedRect = getCellRectByIndex(state, selected.x, selected.y);
+  const selectedAnalysis = getCellAnalysis(state, selected.x, selected.y);
+  if (selectedRect) {
+    const { outerRect, innerRect, points } = buildSamplingPreviewPoints(selectedRect, state.sampling);
+    const textRect = getTextAssistRect(selectedRect);
+    const previewX = offsetX + (selectedRect.x - bounds.x) * scale;
+    const previewY = offsetY + (selectedRect.y - bounds.y) * scale;
+    const previewW = selectedRect.width * scale;
+    const previewH = selectedRect.height * scale;
+    const outerX = offsetX + (outerRect.x - bounds.x) * scale;
+    const outerY = offsetY + (outerRect.y - bounds.y) * scale;
+    const outerW = outerRect.width * scale;
+    const outerH = outerRect.height * scale;
+    const innerX = offsetX + (innerRect.x - bounds.x) * scale;
+    const innerY = offsetY + (innerRect.y - bounds.y) * scale;
+    const innerW = innerRect.width * scale;
+    const innerH = innerRect.height * scale;
+    const textX = offsetX + (textRect.x - bounds.x) * scale;
+    const textY = offsetY + (textRect.y - bounds.y) * scale;
+    const textW = textRect.width * scale;
+    const textH = textRect.height * scale;
+    const handleRadius = Math.max(7, Math.min(11, Math.round(Math.min(previewW, previewH) * 0.08)));
+    const handleDiameter = handleRadius * 2;
+    const handles = {
+      nw: { x: previewX, y: previewY },
+      n: { x: previewX + previewW / 2, y: previewY },
+      ne: { x: previewX + previewW, y: previewY },
+      e: { x: previewX + previewW, y: previewY + previewH / 2 },
+      se: { x: previewX + previewW, y: previewY + previewH },
+      s: { x: previewX + previewW / 2, y: previewY + previewH },
+      sw: { x: previewX, y: previewY + previewH },
+      w: { x: previewX, y: previewY + previewH / 2 },
+    };
+
+    sampleInspectCtx.strokeStyle = "rgba(244, 198, 79, 0.96)";
+    sampleInspectCtx.lineWidth = 3;
+    sampleInspectCtx.strokeRect(previewX, previewY, previewW, previewH);
+    sampleInspectCtx.strokeStyle = "rgba(75, 171, 114, 0.96)";
+    sampleInspectCtx.lineWidth = 2;
+    sampleInspectCtx.strokeRect(outerX, outerY, outerW, outerH);
+    sampleInspectCtx.strokeStyle = "rgba(44, 196, 198, 0.98)";
+    sampleInspectCtx.setLineDash([7, 5]);
+    sampleInspectCtx.strokeRect(innerX, innerY, innerW, innerH);
+    sampleInspectCtx.setLineDash([]);
+    if (state.recognition?.watermarkTextAssist) {
+      sampleInspectCtx.strokeStyle = "rgba(186, 90, 214, 0.98)";
+      sampleInspectCtx.setLineDash([5, 4]);
+      sampleInspectCtx.strokeRect(textX, textY, textW, textH);
+      sampleInspectCtx.setLineDash([]);
+    }
+
+    for (const point of points) {
+      const x = offsetX + (point.x - bounds.x) * scale;
+      const y = offsetY + (point.y - bounds.y) * scale;
+      sampleInspectCtx.beginPath();
+      sampleInspectCtx.fillStyle = state.sampling.mode === "anchor" ? "#9d5333" : "rgba(44, 196, 198, 0.96)";
+      sampleInspectCtx.arc(x, y, state.sampling.mode === "anchor" ? 5 : 3.5, 0, Math.PI * 2);
+      sampleInspectCtx.fill();
+      sampleInspectCtx.strokeStyle = "rgba(255,255,255,0.9)";
+      sampleInspectCtx.lineWidth = 1;
+      sampleInspectCtx.stroke();
+    }
+
+    sampleInspectCtx.fillStyle = "#ffffff";
+    sampleInspectCtx.strokeStyle = "rgba(244, 198, 79, 0.98)";
+    sampleInspectCtx.lineWidth = 2;
+    for (const handle of Object.values(handles)) {
+      sampleInspectCtx.beginPath();
+      sampleInspectCtx.arc(handle.x, handle.y, handleRadius, 0, Math.PI * 2);
+      sampleInspectCtx.fill();
+      sampleInspectCtx.stroke();
+    }
+
+    sampleInspectOverlay = {
+      previewBox: { x: previewX, y: previewY, width: previewW, height: previewH },
+      handles,
+      handleRadius,
+      handleDiameter,
+      scale,
+      selected,
+    };
+  }
+
+  sampleInspectCtx.fillStyle = "#302116";
+  sampleInspectCtx.font = "800 13px 'Segoe UI'";
+  sampleInspectCtx.textAlign = "left";
+  sampleInspectCtx.textBaseline = "middle";
+  sampleInspectCtx.fillText(`真实采样检查 · ${inspectWindow}x${inspectWindow} · 当前格 ${selected.x},${selected.y}`, 14, 18);
+  if (sampleInspectStatus) {
+    sampleInspectStatus.textContent = selectedAnalysis
+      ? `????? (${selected.x},${selected.y}) ? ${selectedAnalysis.excluded ? "????????" : `?? ${selectedAnalysis.code}`}${selectedAnalysis.manualOverride ? "??????" : ""}${selectedAnalysis.textAssist?.applied ? ` ? ???? ${selectedAnalysis.textAssist.code}` : ""} ? ?? RGB ${formatRgb(selectedAnalysis.sampledRgb)} ? ?? ${selectedAnalysis.confidence.toFixed(2)}?????????????????`
+      : `????? (${selected.x},${selected.y}) ? ????????????????????????????????????????`;
+  }
+  renderSampleVotePanel(selectedAnalysis);
+}
+
+function drawSamplingOverlayOnCrop(originX, originY, zoomScale) {
+  const state = getState();
+  if (!state.showSamplingOverlay) {
+    return;
+  }
+
+  const previewRect = getCellRectByIndex(
+    state,
+    state.selectedPreviewCell?.x || 1,
+    state.selectedPreviewCell?.y || 1,
+  );
+  if (previewRect) {
+    const { outerRect, innerRect, points } = buildSamplingPreviewPoints(previewRect, state.sampling);
+    const textRect = getTextAssistRect(previewRect);
+    const previewX = originX + (previewRect.x - state.crop.x) * zoomScale;
+    const previewY = originY + (previewRect.y - state.crop.y) * zoomScale;
+    const previewW = previewRect.width * zoomScale;
+    const previewH = previewRect.height * zoomScale;
+    const outerX = originX + (outerRect.x - state.crop.x) * zoomScale;
+    const outerY = originY + (outerRect.y - state.crop.y) * zoomScale;
+    const outerW = outerRect.width * zoomScale;
+    const outerH = outerRect.height * zoomScale;
+    const innerX = originX + (innerRect.x - state.crop.x) * zoomScale;
+    const innerY = originY + (innerRect.y - state.crop.y) * zoomScale;
+    const innerW = innerRect.width * zoomScale;
+    const innerH = innerRect.height * zoomScale;
+    const textX = originX + (textRect.x - state.crop.x) * zoomScale;
+    const textY = originY + (textRect.y - state.crop.y) * zoomScale;
+    const textW = textRect.width * zoomScale;
+    const textH = textRect.height * zoomScale;
+
+    cropCtx.strokeStyle = "rgba(244, 198, 79, 0.95)";
+    cropCtx.lineWidth = 2;
+    cropCtx.strokeRect(previewX, previewY, previewW, previewH);
+    cropCtx.strokeStyle = "rgba(75, 171, 114, 0.95)";
+    cropCtx.strokeRect(outerX, outerY, outerW, outerH);
+    cropCtx.strokeStyle = "rgba(44, 196, 198, 0.95)";
+    cropCtx.setLineDash([6, 4]);
+    cropCtx.strokeRect(innerX, innerY, innerW, innerH);
+    cropCtx.setLineDash([]);
+    if (state.recognition?.watermarkTextAssist) {
+      cropCtx.strokeStyle = "rgba(186, 90, 214, 0.95)";
+      cropCtx.setLineDash([4, 4]);
+      cropCtx.strokeRect(textX, textY, textW, textH);
+      cropCtx.setLineDash([]);
+    }
+
+    for (const point of points) {
+      const x = originX + (point.x - state.crop.x) * zoomScale;
+      const y = originY + (point.y - state.crop.y) * zoomScale;
+      cropCtx.beginPath();
+      cropCtx.fillStyle = state.sampling.mode === "anchor" ? "rgba(157, 83, 51, 0.96)" : "rgba(44, 196, 198, 0.92)";
+      cropCtx.arc(x, y, state.sampling.mode === "anchor" ? Math.max(3, zoomScale * 0.12) : (zoomScale > 5 ? 2.2 : 1.2), 0, Math.PI * 2);
+      cropCtx.fill();
+    }
+  }
+
+  if (!state.analysis) {
+    return;
+  }
+
+  for (const cell of state.analysis.cells) {
+    if (cell.confidence < 0.55) {
+      const cellX = originX + (cell.cellStartX - state.analysis.crop.x) * zoomScale;
+      const cellY = originY + (cell.cellStartY - state.analysis.crop.y) * zoomScale;
+      const cellW = cell.cellWidth * zoomScale;
+      const cellH = cell.cellHeight * zoomScale;
+      cropCtx.strokeStyle = "rgba(231, 0, 47, 0.55)";
+      cropCtx.lineWidth = 1.5;
+      cropCtx.strokeRect(cellX + 1, cellY + 1, cellW - 2, cellH - 2);
+    }
+  }
+}
+
+function drawCropCanvas() {
+  const state = getState();
+  const { image, crop, cropDisplay, pickerMode, cropConfirmed } = state;
+
+  if (!image.element || !cropDisplay) {
+    const width = cropCanvas.clientWidth || 320;
+    const height = 320;
+    ensureCanvasSize(cropCanvas, width, height);
+    cropCtx.clearRect(0, 0, width, height);
+    cropCtx.fillStyle = "#6f6257";
+    cropCtx.font = "600 16px 'Segoe UI'";
+    cropCtx.fillText("Upload a pattern to start cropping.", 18, 40);
+    return;
+  }
+
+  if (!crop) {
+    cropCtx.clearRect(0, 0, cropCanvas.clientWidth, cropCanvas.clientHeight);
+    cropCtx.drawImage(image.element, 0, 0, cropDisplay.drawWidth, cropDisplay.drawHeight);
+    return;
+  }
+
+  if (cropConfirmed) {
+    const canvasWidth = cropCanvas.clientWidth || cropDisplay.drawWidth;
+    const canvasHeight = Math.max(320, cropCanvas.clientHeight || cropDisplay.drawHeight);
+    ensureCanvasSize(cropCanvas, canvasWidth, canvasHeight);
+    cropCtx.clearRect(0, 0, canvasWidth, canvasHeight);
+
+    const zoomScale = Math.min(canvasWidth / crop.width, canvasHeight / crop.height);
+    const zoomWidth = crop.width * zoomScale;
+    const zoomHeight = crop.height * zoomScale;
+    const originX = (canvasWidth - zoomWidth) / 2;
+    const originY = (canvasHeight - zoomHeight) / 2;
+
+    cropCtx.fillStyle = "#fffdf8";
+    cropCtx.fillRect(originX - 4, originY - 4, zoomWidth + 8, zoomHeight + 8);
+    cropCtx.drawImage(
+      image.element,
+      crop.x,
+      crop.y,
+      crop.width,
+      crop.height,
+      originX,
+      originY,
+      zoomWidth,
+      zoomHeight,
+    );
+
+    const metrics = getEffectiveGridMetrics(state);
+    cropCtx.strokeStyle = "rgba(48, 33, 22, 0.18)";
+    cropCtx.lineWidth = 1;
+
+    if (metrics) {
+      for (let gridX = 0; gridX <= state.gridSize.width; gridX += 1) {
+        const x = originX + (metrics.originX + gridX * metrics.cellWidth - crop.x) * zoomScale;
+        cropCtx.beginPath();
+        cropCtx.moveTo(x, originY);
+        cropCtx.lineTo(x, originY + zoomHeight);
+        cropCtx.stroke();
+      }
+
+      for (let gridY = 0; gridY <= state.gridSize.height; gridY += 1) {
+        const y = originY + (metrics.originY + gridY * metrics.cellHeight - crop.y) * zoomScale;
+        cropCtx.beginPath();
+        cropCtx.moveTo(originX, y);
+        cropCtx.lineTo(originX + zoomWidth, y);
+        cropCtx.stroke();
+      }
+    }
+
+    drawSamplingOverlayOnCrop(originX, originY, zoomScale);
+    cropCtx.fillStyle = "#302116";
+    cropCtx.font = "700 13px 'Segoe UI'";
+    cropCtx.fillText(
+      `Confirmed crop preview 路 棰勮鏍?${state.selectedPreviewCell?.x || 1},${state.selectedPreviewCell?.y || 1}`,
+      originX + 8,
+      Math.max(22, originY - 10),
+    );
+    return;
+  }
+
+  cropCtx.clearRect(0, 0, cropCanvas.clientWidth, cropCanvas.clientHeight);
+  cropCtx.drawImage(image.element, 0, 0, cropDisplay.drawWidth, cropDisplay.drawHeight);
+  cropCtx.fillStyle = "rgba(40, 27, 19, 0.42)";
+  cropCtx.fillRect(0, 0, cropDisplay.drawWidth, cropDisplay.drawHeight);
+
+  const left = crop.x * cropDisplay.scale;
+  const top = crop.y * cropDisplay.scale;
+  const width = crop.width * cropDisplay.scale;
+  const height = crop.height * cropDisplay.scale;
+
+  cropCtx.clearRect(left, top, width, height);
+  cropCtx.strokeStyle = pickerMode ? "#2f6c73" : "#fef3d8";
+  cropCtx.lineWidth = 2;
+  cropCtx.strokeRect(left, top, width, height);
+  cropCtx.fillStyle = pickerMode ? "rgba(47, 108, 115, 0.16)" : "rgba(255, 248, 234, 0.16)";
+  cropCtx.fillRect(left, top, width, height);
+  cropCtx.fillStyle = "#fffaf3";
+  cropCtx.font = "700 14px 'Segoe UI'";
+  cropCtx.fillText(
+    pickerMode ? "Color pick mode: tap the image." : `Crop area ${Math.round(crop.width)} x ${Math.round(crop.height)}`,
+    left + 10,
+    Math.max(18, top + 22),
+  );
+}
+
+function renderPaletteList() {
+  const { palette, paletteSetName } = getState();
+  paletteStatus.textContent = `${palette.length} ???`;
+  if (paletteSetNameText) {
+    paletteSetNameText.textContent = paletteSetName || "??????";
+  }
+
+  if (!palette.length) {
+    paletteList.innerHTML = `<p class="empty-text">Add palette colors first. Grid cells will be matched to the nearest RGB entry.</p>`;
+    return;
+  }
+
+  paletteList.innerHTML = palette
+    .map(
+      (entry, index) => `
+        <div class="palette-item">
+          <div class="palette-item-main">
+            <span class="swatch" style="background:${rgbToHex(entry.rgb)}"></span>
+            <div>
+              <div><code>${entry.code}</code></div>
+              <small>${formatRgb(entry.rgb)}</small>
+            </div>
+          </div>
+          <button type="button" class="ghost-btn" data-remove-index="${index}">Remove</button>
+        </div>
+      `,
+    )
+    .join("");
+
+  if (togglePaletteBtn && !paletteExpanded) {
+    togglePaletteBtn.innerHTML = `<span id="togglePaletteIcon">鈻?/span> 灞曞紑鑹插崱鍒楄〃锛?{palette.length} 鑹诧級`;
+  }
+
+  if (paletteExpanded && paletteSearchInput?.value) {
+    filterPalette();
+  }
+}
+
+function renderFocusColorOptions() {
+  if (!focusColorSelect) {
+    return;
+  }
+
+  const { analysis, focusColorCode } = getState();
+  const options = ['<option value="">鏄剧ず鍏ㄩ儴棰滆壊</option>'];
+  if (analysis) {
+    for (const item of analysis.globalStats) {
+      options.push(`<option value="${item.code}">${item.code} (${item.count})</option>`);
+    }
+  }
+  focusColorSelect.innerHTML = options.join("");
+  focusColorSelect.value = focusColorCode || "";
+}
+
+function togglePalette() {
+  if (!togglePaletteBtn || !paletteSearchInput) {
+    return;
+  }
+
+  paletteExpanded = !paletteExpanded;
+  paletteList.style.display = paletteExpanded ? "grid" : "none";
+  paletteSearchInput.style.display = paletteExpanded ? "block" : "none";
+  togglePaletteBtn.innerHTML = paletteExpanded
+    ? `<span id="togglePaletteIcon">鈻?/span> 鏀惰捣鑹插崱鍒楄〃`
+    : `<span id="togglePaletteIcon">鈻?/span> 灞曞紑鑹插崱鍒楄〃锛?{getState().palette.length} 鑹诧級`;
+
+  if (!paletteExpanded) {
+    paletteSearchInput.value = "";
+    filterPalette();
+  }
+}
+
+function filterPalette() {
+  if (!paletteSearchInput) {
+    return;
+  }
+
+  const query = paletteSearchInput.value.trim().toUpperCase();
+  for (const item of paletteList.querySelectorAll(".palette-item")) {
+    const code = item.querySelector("code")?.textContent || "";
+    item.style.display = !query || code.includes(query) ? "flex" : "none";
+  }
+}
+
+function switchTab(tabId) {
+  if (!tabBtns.length || !tabPanels.length) {
+    return;
+  }
+
+  for (const button of tabBtns) {
+    button.classList.toggle("active", button.dataset.tab === tabId);
+  }
+
+  for (const panel of tabPanels) {
+    panel.classList.toggle("active", panel.id === tabId);
+  }
+
+  window.setTimeout(() => {
+    const state = getState();
+    if (!state.image.element) {
+      rerender();
+      return;
+    }
+
+    patchState({
+      cropDisplay: buildCropDisplay({
+        width: state.image.width,
+        height: state.image.height,
+      }),
+    });
+  }, 40);
+}
+
+function renderSummary() {
+  const state = getState();
+  const { image, crop, gridSize, analysis, currentChunkIndex, strategyType, focusColorCode } = state;
+  imageStatus.textContent = image.element ? "Image ready" : "No image";
+  imageSizeText.textContent = image.width && image.height ? `${image.width} x ${image.height}` : "-";
+  pickColorBtn.textContent = state.pickerMode ? "Tap image to sample" : "Pick from image";
+  parseStatus.textContent = analysis ? "Analysis ready" : "Waiting";
+  analyzeBtn.disabled = !image.element || !crop || !state.palette.length;
+  downloadJsonBtn.disabled = !analysis;
+  prevChunkBtn.disabled = !analysis || currentChunkIndex <= 0;
+  nextChunkBtn.disabled = !analysis || currentChunkIndex >= (analysis?.chunks.length || 1) - 1;
+  if (moveUpBtn) {
+    moveUpBtn.disabled = !analysis || analysis.chunks[currentChunkIndex]?.chunkRow <= 1;
+  }
+  if (moveDownBtn) {
+    moveDownBtn.disabled =
+      !analysis || analysis.chunks[currentChunkIndex]?.chunkRow >= Math.ceil((analysis?.gridHeight || 0) / 5);
+  }
+  if (moveLeftBtn) {
+    moveLeftBtn.disabled = !analysis || analysis.chunks[currentChunkIndex]?.chunkCol <= 1;
+  }
+  if (moveRightBtn) {
+    moveRightBtn.disabled =
+      !analysis || analysis.chunks[currentChunkIndex]?.chunkCol >= Math.ceil((analysis?.gridWidth || 0) / 5);
+  }
+  if (tabStep4Btn) {
+    tabStep4Btn.disabled = !analysis;
+  }
+  if (sampleOverlayToggle) {
+    sampleOverlayToggle.textContent = state.showSamplingOverlay ? "隐藏采样点" : "显示采样点";
+  }
+  if (sampleModeSelect && document.activeElement !== sampleModeSelect) {
+    sampleModeSelect.value = state.sampling.mode || "ring";
+  }
+  if (sampleOuterMarginInput && document.activeElement !== sampleOuterMarginInput) {
+    sampleOuterMarginInput.value = Math.round((state.sampling.outerMarginRatio || 0.1) * 100);
+  }
+  if (sampleInsetInput && document.activeElement !== sampleInsetInput) {
+    sampleInsetInput.value = Math.round((state.sampling.innerExclusionRatio || 0.24) * 100);
+  }
+  if (sampleOffsetXInput && document.activeElement !== sampleOffsetXInput) {
+    sampleOffsetXInput.value = Math.round((state.sampling.offsetXRatio || 0) * 100);
+  }
+  if (sampleOffsetYInput && document.activeElement !== sampleOffsetYInput) {
+    sampleOffsetYInput.value = Math.round((state.sampling.offsetYRatio || 0) * 100);
+  }
+  if (watermarkTextAssistInput) {
+    watermarkTextAssistInput.checked = Boolean(state.recognition?.watermarkTextAssist);
+  }
+  if (excludeOuterLayersInput && document.activeElement !== excludeOuterLayersInput) {
+    excludeOuterLayersInput.value = String(state.recognition?.excludeOuterLayers || 0);
+  }
+  if (gridOffsetXInput && document.activeElement !== gridOffsetXInput) {
+    gridOffsetXInput.value = (state.gridAlignment?.offsetX || 0).toFixed(1);
+  }
+  if (gridOffsetYInput && document.activeElement !== gridOffsetYInput) {
+    gridOffsetYInput.value = (state.gridAlignment?.offsetY || 0).toFixed(1);
+  }
+  if (cellWidthScaleInput && document.activeElement !== cellWidthScaleInput) {
+    cellWidthScaleInput.value = Math.round((state.gridAlignment?.cellWidthScale || 1) * 100);
+  }
+  if (cellHeightScaleInput && document.activeElement !== cellHeightScaleInput) {
+    cellHeightScaleInput.value = Math.round((state.gridAlignment?.cellHeightScale || 1) * 100);
+  }
+  if (previewCellInput && document.activeElement !== previewCellInput) {
+    previewCellInput.value = `${state.selectedPreviewCell?.x || 1},${state.selectedPreviewCell?.y || 1}`;
+  }
+  if (sampleInspectWindowSelect && document.activeElement !== sampleInspectWindowSelect) {
+    sampleInspectWindowSelect.value = String(state.sampleInspectWindow || 3);
+  }
+  if (paletteImportModeSelect && document.activeElement !== paletteImportModeSelect) {
+    paletteImportModeSelect.value = state.paletteImportMode || "replace";
+  }
+  if (markerPresetSelect && document.activeElement !== markerPresetSelect) {
+    markerPresetSelect.value = state.markerPreset || "lime";
+  }
+  if (sampleAnchorInfo) {
+    sampleAnchorInfo.textContent =
+      state.sampling.mode === "anchor"
+        ? `褰撳墠瀹夊叏鐐癸細${Math.round((state.sampling.anchorXRatio || 0.18) * 100)}% , ${Math.round((state.sampling.anchorYRatio || 0.18) * 100)}%`
+        : "框环取样会沿外框一圈取色，并避开内层文字区。";
+  }
+
+  if (crop) {
+    const metrics = getEffectiveGridMetrics(state);
+    cropInfoText.textContent = `x:${crop.x.toFixed(1)} y:${crop.y.toFixed(1)} / ${crop.width.toFixed(1)} x ${crop.height.toFixed(1)}`;
+    cellSizeText.textContent = metrics
+      ? `${metrics.cellWidth.toFixed(2)} x ${metrics.cellHeight.toFixed(2)} px 路 鍋忕Щ ${metrics.originX - crop.x >= 0 ? "+" : ""}${(metrics.originX - crop.x).toFixed(1)}, ${metrics.originY - crop.y >= 0 ? "+" : ""}${(metrics.originY - crop.y).toFixed(1)}`
+      : `${(crop.width / gridSize.width).toFixed(2)} x ${(crop.height / gridSize.height).toFixed(2)} px`;
+  } else {
+    cropInfoText.textContent = "-";
+    cellSizeText.textContent = "-";
+  }
+
+  if (!analysis) {
+    analysisSummary.className = "summary-card empty";
+    analysisSummary.textContent = "After analysis, this panel will show grid overview, chunk info, and the active smart plan.";
+    chunkLabel.textContent = "-";
+    chunkCoordLabel.textContent = "-";
+    localStats.innerHTML = `<p class="empty-text">No local stats yet.</p>`;
+    globalStats.innerHTML = `<p class="empty-text">No global stats yet.</p>`;
+    planPanel.innerHTML = `<p class="empty-text">No plan yet.</p>`;
+    renderFocusColorOptions();
+    if (focusColorSummary) {
+      focusColorSummary.textContent = "可筛选某一个颜色，只看它在全图和当前 5x5 里的位置。";
+    }
+    if (markerSummary) {
+      markerSummary.textContent = "先在整体大图模式里选一个颜色，这里会自动给出四角加中心的定位点。";
+    }
+    return;
+  }
+
+  const chunk = analysis.chunks[currentChunkIndex];
+  const plan = generateSmartPlan({ ...analysis, currentChunkIndex }, strategyType);
+  const localColorStats = buildStats(chunk.cells);
+  const focusedStats = getFocusedStats(analysis, focusColorCode);
+  const markerTargetCode = getMarkerTargetCode(state);
+  const markerPreset = getMarkerPresets()[state.markerPreset] || getMarkerPresets().lime;
+  const markerAnchors = buildMarkerAnchors(analysis, markerTargetCode);
+  const focusedCellsInChunk = focusColorCode ? chunk.cells.filter((cell) => !cell.excluded && cell.code === focusColorCode) : [];
+  const focusedPositions =
+    focusedCellsInChunk.length > 0
+      ? focusedCellsInChunk
+          .slice(0, 12)
+          .map((cell) => `(${cell.x},${cell.y})`)
+          .join(" ")
+      : "";
+
+  analysisSummary.className = "summary-card";
+  analysisSummary.innerHTML = `
+    <h3>Analysis Overview</h3>
+    <p>Total cells: <strong>${analysis.gridWidth * analysis.gridHeight}</strong>. Total 5x5 chunks: <strong>${analysis.chunks.length}</strong>. Active plan: <span class="mini-code">${plan.title}</span>.</p>
+  `;
+  chunkLabel.textContent = `Chunk ${currentChunkIndex + 1} / ${analysis.chunks.length}`;
+  chunkCoordLabel.textContent = `鍖哄潡 ${chunk.chunkCol},${chunk.chunkRow} 路 (${chunk.startX},${chunk.startY}) -> (${chunk.endX},${chunk.endY})`;
+  localStats.innerHTML = renderStatList(localColorStats, "No local color stats.");
+  globalStats.innerHTML = renderStatList(analysis.globalStats, "No global color stats.");
+  planPanel.innerHTML = `<h3>${plan.title}</h3><p class="plan-text">${plan.description}</p>`;
+  renderFocusColorOptions();
+  if (focusColorSummary) {
+    focusColorSummary.textContent = focusedStats
+      ? `${focusedStats.code} ?? ${focusedStats.count} ????? ${focusedStats.chunks} ? 5x5 ??????? ${focusedCellsInChunk.length} ?${focusedPositions ? `?${focusedPositions}?` : ""}`
+      : `???????${analysis.globalStats[0]?.code || "-"}?${analysis.globalStats[0]?.count || 0} ???`;
+  }
+  if (markerSummary) {
+    markerSummary.textContent = markerAnchors.length
+      ? `??? ${markerTargetCode} ? ${markerAnchors.map((anchor) => `${anchor.label}(${anchor.x},${anchor.y})`).join("?")} ???${markerPreset.label}?????????????? ${markerTargetCode}?`
+      : "当前选中的颜色在图里数量太少，暂时不建议做定位标记。";
+  }
+}
+
+function drawViewer() {
+  const state = getState();
+  const { analysis, currentChunkIndex, strategyType, focusColorCode } = state;
+  const seedCandidateKeys = new Set((state.seedAssist?.candidates || []).map((item) => getCellKey(item.x, item.y)));
+  const width = viewerCanvas.clientWidth || 320;
+  const height = Math.max(320, width);
+  ensureCanvasSize(viewerCanvas, width, height);
+  viewerCtx.clearRect(0, 0, width, height);
+  viewerCtx.imageSmoothingEnabled = false;
+
+  if (!analysis) {
+    viewerCtx.fillStyle = "#6f6257";
+    viewerCtx.font = "600 16px 'Segoe UI'";
+    viewerCtx.fillText("Run analysis to view a zoomed 5x5 chunk.", 18, 40);
+    return;
+  }
+
+  const chunk = analysis.chunks[currentChunkIndex];
+  const plan = generateSmartPlan({ ...analysis, currentChunkIndex }, strategyType);
+  const visibleHighlights = focusColorCode
+    ? plan.highlights.filter((highlight) =>
+        chunk.cells.some((cell) => cell.x === highlight.x && cell.y === highlight.y && !cell.excluded && cell.code === focusColorCode),
+      )
+    : plan.highlights;
+  const markerPreset = getMarkerPresets()[state.markerPreset] || getMarkerPresets().lime;
+  const markerAnchors = buildMarkerAnchors(analysis, getMarkerTargetCode(state))
+    .filter((anchor) => anchor.x >= chunk.startX && anchor.x <= chunk.endX && anchor.y >= chunk.startY && anchor.y <= chunk.endY);
+  const padding = 20;
+  const cellSize = Math.floor((Math.min(width, height) - padding * 2) / Math.max(chunk.width, chunk.height));
+  const gridWidth = chunk.width * cellSize;
+  const gridHeight = chunk.height * cellSize;
+  const offsetX = Math.floor((width - gridWidth) / 2);
+  const offsetY = Math.floor((height - gridHeight) / 2);
+
+  viewerCtx.fillStyle = "#fffdf8";
+  viewerCtx.fillRect(offsetX - 6, offsetY - 6, gridWidth + 12, gridHeight + 12);
+
+  for (const cell of chunk.cells) {
+    const localCol = cell.x - chunk.startX;
+    const localRow = cell.y - chunk.startY;
+    const x = offsetX + localCol * cellSize;
+    const y = offsetY + localRow * cellSize;
+    const isFocusMatch = !cell.excluded && (!focusColorCode || cell.code === focusColorCode);
+
+    viewerCtx.fillStyle = cell.excluded ? "#f0e7da" : rgbToHex(cell.matchedRgb);
+    viewerCtx.fillRect(x, y, cellSize, cellSize);
+    if (!isFocusMatch) {
+      viewerCtx.fillStyle = "rgba(255, 253, 248, 0.82)";
+      viewerCtx.fillRect(x, y, cellSize, cellSize);
+    }
+    viewerCtx.strokeStyle = "rgba(54, 39, 29, 0.2)";
+    viewerCtx.lineWidth = 1;
+    viewerCtx.strokeRect(x, y, cellSize, cellSize);
+    if (isFocusMatch) {
+      viewerCtx.fillStyle = getReadableTextColor(cell.matchedRgb);
+      viewerCtx.font = `700 ${Math.max(12, Math.floor(cellSize * 0.22))}px 'Segoe UI'`;
+      viewerCtx.textAlign = "center";
+      viewerCtx.textBaseline = "middle";
+      viewerCtx.fillText(cell.excluded ? "脳" : cell.code, x + cellSize / 2, y + cellSize / 2);
+      viewerCtx.fillStyle = "rgba(48, 33, 22, 0.7)";
+      viewerCtx.font = `600 ${Math.max(10, Math.floor(cellSize * 0.16))}px 'Segoe UI'`;
+      viewerCtx.fillText(`${cell.x},${cell.y}`, x + cellSize / 2, y + cellSize - 11);
+    }
+
+    if (focusColorCode && !cell.excluded && cell.code === focusColorCode) {
+      viewerCtx.strokeStyle = "#9d5333";
+      viewerCtx.lineWidth = 3;
+      viewerCtx.strokeRect(x + 3, y + 3, cellSize - 6, cellSize - 6);
+    }
+    if (seedCandidateKeys.has(getCellKey(cell.x, cell.y))) {
+      viewerCtx.strokeStyle = "rgba(207, 91, 182, 0.95)";
+      viewerCtx.lineWidth = 3;
+      viewerCtx.strokeRect(x + 6, y + 6, cellSize - 12, cellSize - 12);
+    }
+  }
+
+  for (const highlight of visibleHighlights) {
+    const localCol = highlight.x - chunk.startX;
+    const localRow = highlight.y - chunk.startY;
+    const x = offsetX + localCol * cellSize;
+    const y = offsetY + localRow * cellSize;
+
+    viewerCtx.strokeStyle = strategyType === "edge-first" ? "#2f6c73" : "#f4c64f";
+    viewerCtx.lineWidth = 4;
+    viewerCtx.strokeRect(x + 2, y + 2, cellSize - 4, cellSize - 4);
+  }
+
+  for (const anchor of markerAnchors) {
+    const localCol = anchor.x - chunk.startX;
+    const localRow = anchor.y - chunk.startY;
+    const x = offsetX + localCol * cellSize;
+    const y = offsetY + localRow * cellSize;
+    const badgeRadius = Math.max(9, Math.floor(cellSize * 0.18));
+    viewerCtx.fillStyle = markerPreset.color;
+    viewerCtx.beginPath();
+    viewerCtx.arc(x + cellSize - badgeRadius - 4, y + badgeRadius + 4, badgeRadius, 0, Math.PI * 2);
+    viewerCtx.fill();
+    viewerCtx.fillStyle = "#fff";
+    viewerCtx.font = `800 ${Math.max(10, Math.floor(cellSize * 0.16))}px 'Segoe UI'`;
+    viewerCtx.textAlign = "center";
+    viewerCtx.textBaseline = "middle";
+    viewerCtx.fillText(String(anchor.index), x + cellSize - badgeRadius - 4, y + badgeRadius + 4);
+  }
+}
+
+function drawMinimap() {
+  if (!minimapCanvas || !minimapCtx) {
+    return;
+  }
+
+  const state = getState();
+  const { analysis, currentChunkIndex, focusColorCode } = state;
+  const width = minimapCanvas.clientWidth || 120;
+  const height = Math.max(width, 120);
+  ensureCanvasSize(minimapCanvas, width, height);
+  minimapCtx.clearRect(0, 0, width, height);
+
+  if (!analysis) {
+    minimapCtx.fillStyle = "#6f6257";
+    minimapCtx.font = "600 12px 'Segoe UI'";
+    minimapCtx.fillText("Analyze to show minimap", 10, 30);
+    return;
+  }
+
+  const { cellSize, offsetX, offsetY } = getMapLayout(width, height, analysis);
+  minimapCtx.imageSmoothingEnabled = false;
+
+  for (const cell of analysis.cells) {
+    const x = offsetX + (cell.x - 1) * cellSize;
+    const y = offsetY + (cell.y - 1) * cellSize;
+    const isFocusMatch = !cell.excluded && (!focusColorCode || cell.code === focusColorCode);
+    minimapCtx.fillStyle = cell.excluded ? "#efe5d8" : isFocusMatch ? rgbToHex(cell.matchedRgb) : "#e9dfd1";
+    minimapCtx.fillRect(x, y, cellSize, cellSize);
+  }
+
+  const chunk = analysis.chunks[currentChunkIndex];
+  const x = offsetX + (chunk.startX - 1) * cellSize;
+  const y = offsetY + (chunk.startY - 1) * cellSize;
+  const chunkWidth = chunk.width * cellSize;
+  const chunkHeight = chunk.height * cellSize;
+  minimapCtx.strokeStyle = "#e7002f";
+  minimapCtx.lineWidth = 2;
+  minimapCtx.strokeRect(x - 1, y - 1, chunkWidth + 2, chunkHeight + 2);
+}
+
+function drawOverview() {
+  if (!overviewCanvas || !overviewCtx) {
+    return;
+  }
+
+  const state = getState();
+  const { analysis, currentChunkIndex, focusColorCode } = state;
+  const seedCandidateKeys = new Set((state.seedAssist?.candidates || []).map((item) => getCellKey(item.x, item.y)));
+  const markerPreset = getMarkerPresets()[state.markerPreset] || getMarkerPresets().lime;
+  const markerAnchors = buildMarkerAnchors(analysis, getMarkerTargetCode(state));
+  const width = overviewCanvas.clientWidth || 320;
+  const targetHeight = analysis
+    ? Math.max(320, Math.min(560, Math.round((width * analysis.gridHeight) / analysis.gridWidth)))
+    : 320;
+  ensureCanvasSize(overviewCanvas, width, targetHeight);
+  overviewCtx.clearRect(0, 0, width, targetHeight);
+
+  if (!analysis) {
+    overviewCtx.fillStyle = "#6f6257";
+    overviewCtx.font = "600 14px 'Segoe UI'";
+    overviewCtx.fillText("Analyze to show full-map overview.", 14, 28);
+    return;
+  }
+
+  const { cellSize, offsetX, offsetY } = getMapLayout(width, targetHeight, analysis);
+  overviewCtx.imageSmoothingEnabled = false;
+
+  for (const cell of analysis.cells) {
+    const x = offsetX + (cell.x - 1) * cellSize;
+    const y = offsetY + (cell.y - 1) * cellSize;
+    const isFocusMatch = !cell.excluded && (!focusColorCode || cell.code === focusColorCode);
+    overviewCtx.fillStyle = cell.excluded ? "#f0e7da" : isFocusMatch ? rgbToHex(cell.matchedRgb) : "#efe5d8";
+    overviewCtx.fillRect(x, y, cellSize, cellSize);
+
+    if (focusColorCode && !cell.excluded && cell.code === focusColorCode && cellSize >= 5) {
+      overviewCtx.strokeStyle = "#9d5333";
+      overviewCtx.lineWidth = Math.max(1, cellSize * 0.18);
+      overviewCtx.strokeRect(x + 0.5, y + 0.5, Math.max(1, cellSize - 1), Math.max(1, cellSize - 1));
+    }
+    if (seedCandidateKeys.has(getCellKey(cell.x, cell.y))) {
+      overviewCtx.strokeStyle = "rgba(207, 91, 182, 0.9)";
+      overviewCtx.lineWidth = Math.max(1, cellSize * 0.22);
+      overviewCtx.strokeRect(x + 1, y + 1, Math.max(1, cellSize - 2), Math.max(1, cellSize - 2));
+    }
+    if (cell.x === (state.selectedPreviewCell?.x || 1) && cell.y === (state.selectedPreviewCell?.y || 1)) {
+      overviewCtx.strokeStyle = "rgba(244, 198, 79, 0.98)";
+      overviewCtx.lineWidth = Math.max(1.5, cellSize * 0.28);
+      overviewCtx.strokeRect(x + 0.5, y + 0.5, Math.max(1, cellSize - 1), Math.max(1, cellSize - 1));
+    }
+  }
+
+  overviewCtx.strokeStyle = "rgba(48, 33, 22, 0.12)";
+  overviewCtx.lineWidth = 1;
+  for (let gridX = 0; gridX <= analysis.gridWidth; gridX += 5) {
+    const x = offsetX + gridX * cellSize;
+    overviewCtx.beginPath();
+    overviewCtx.moveTo(x, offsetY);
+    overviewCtx.lineTo(x, offsetY + analysis.gridHeight * cellSize);
+    overviewCtx.stroke();
+  }
+  for (let gridY = 0; gridY <= analysis.gridHeight; gridY += 5) {
+    const y = offsetY + gridY * cellSize;
+    overviewCtx.beginPath();
+    overviewCtx.moveTo(offsetX, y);
+    overviewCtx.lineTo(offsetX + analysis.gridWidth * cellSize, y);
+    overviewCtx.stroke();
+  }
+
+  const chunk = analysis.chunks[currentChunkIndex];
+  overviewCtx.strokeStyle = "#e7002f";
+  overviewCtx.lineWidth = 2;
+  overviewCtx.strokeRect(
+    offsetX + (chunk.startX - 1) * cellSize,
+    offsetY + (chunk.startY - 1) * cellSize,
+    chunk.width * cellSize,
+    chunk.height * cellSize,
+  );
+
+  for (const anchor of markerAnchors) {
+    const x = offsetX + (anchor.x - 0.5) * cellSize;
+    const y = offsetY + (anchor.y - 0.5) * cellSize;
+    const radius = Math.max(5, cellSize * 0.46);
+    overviewCtx.fillStyle = markerPreset.color;
+    overviewCtx.beginPath();
+    overviewCtx.arc(x, y, radius, 0, Math.PI * 2);
+    overviewCtx.fill();
+    overviewCtx.fillStyle = "#fff";
+    overviewCtx.font = `800 ${Math.max(8, Math.floor(radius * 1.2))}px 'Segoe UI'`;
+    overviewCtx.textAlign = "center";
+    overviewCtx.textBaseline = "middle";
+    overviewCtx.fillText(String(anchor.index), x, y);
+  }
+}
+
+function rerender() {
+  drawCropCanvas();
+  drawSampleDemo();
+  drawRealSamplingInspector();
+  renderPaletteReview();
+  renderPaletteReviewCodeList();
+  updatePaletteReviewModeUi();
+  renderPaletteList();
+  renderSeedAssistPanel();
+  renderSummary();
+  drawViewer();
+  drawMinimap();
+  drawOverview();
+}
+
+function setExtractionStatus(message, isError = false) {
+  const status = document.querySelector("#paletteExtractStatus");
+  if (!status) {
+    return;
+  }
+  status.textContent = message;
+  status.style.color = isError ? "#c13d3d" : "#745f4b";
+}
+
+function mergePaletteEntries(entries, setName = getState().paletteSetName) {
+  const byCode = new Map(getState().palette.map((entry) => [entry.code, entry]));
+  for (const entry of entries) {
+    byCode.set(entry.code, {
+      code: entry.code,
+      rgb: entry.rgb,
+      standardRgb: entry.standardRgb || entry.rgb,
+    });
+  }
+
+  patchState({
+    palette: [...byCode.values()].sort((left, right) => left.code.localeCompare(right.code)),
+    paletteSetName: setName,
+  });
+  resetAnalysis();
+}
+
+function replacePaletteEntries(entries, setName = "褰撳墠椤圭洰鑹插崱") {
+  patchState({
+    palette: entries
+      .map((entry) => ({
+        code: entry.code,
+        rgb: entry.rgb,
+        standardRgb: entry.standardRgb || entry.rgb,
+      }))
+      .sort((left, right) => left.code.localeCompare(right.code)),
+    paletteSetName: setName,
+  });
+  resetAnalysis();
+}
+
+function applyImportedPalette(entries, setName) {
+  if (getState().paletteImportMode === "merge") {
+    mergePaletteEntries(entries, setName);
+    return;
+  }
+
+  replacePaletteEntries(entries, setName);
+}
+
+function extractPaletteFromLegendArea() {
+  const state = getState();
+  if (!state.originalCanvas) {
+    setExtractionStatus("???????????????", true);
+    return;
+  }
+
+  const extracted = extractPaletteCandidatesFromCanvas(buildLegendProbeCanvas(state.originalCanvas), {
+    sampleStep: 5,
+    maxBuckets: 120,
+  });
+
+  if (!extracted.length) {
+    setExtractionStatus("??????????????????????????", true);
+    return;
+  }
+
+  applyImportedPalette(extracted, "鍘熷浘搴曢儴鑹插崱");
+  setExtractionStatus(
+    state.paletteImportMode === "merge"
+      ? `?????????? ${extracted.length} ???????????`
+      : `???????????????? ${extracted.length} ????`,
+  );
+}
+
+async function extractPaletteFromUploadedImage(file) {
+  if (!file) {
+    return;
+  }
+
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    image.decoding = "async";
+    image.src = objectUrl;
+    await image.decode();
+    const canvas = createImageBitmapCanvas(image);
+
+    if (canUseBackendOcr()) {
+      try {
+        const backendResult = await requestBackendPaletteOcr(file);
+        const detections = backendResult.detections || [];
+        const recognizedEntries = backendResult.recognizedEntries || [];
+        const backendLabel = getBackendEngineLabel(backendResult.engine);
+        setPaletteReviewData(canvas, file.name || "?????", detections);
+        renderPaletteReview();
+
+        if (!detections.length) {
+          setExtractionStatus(`${backendLabel} ????????????????????`, true);
+          setPaletteReviewStatus(`${backendLabel} ???????????????????????`, true);
+          return;
+        }
+
+        if (recognizedEntries.length) {
+          applyImportedPalette(recognizedEntries, file.name || "?????");
+          setExtractionStatus(
+            `${backendLabel} ??? ${recognizedEntries.length} ?????????????????`,
+          );
+          setPaletteReviewStatus(
+            `${backendLabel} ???? ${detections.length} ???????? ${recognizedEntries.length} ???????????????????`,
+          );
+          return;
+        }
+
+        setExtractionStatus(`${backendLabel} ????????????????????????????`, true);
+        setPaletteReviewStatus("当前没有识别出可用色号。请点右侧列表中的色块，再手动填写或重识别。", true);
+        return;
+      } catch (error) {
+        console.warn("Backend OCR unavailable, fallback to local review:", error);
+      }
+    }
+
+    const detections = analyzePaletteCardCanvas(canvas);
+    const recognizedEntries = getRecognizedEntriesFromDetections(detections);
+    setPaletteReviewData(canvas, file.name || "?????", detections);
+    renderPaletteReview();
+
+    if (!detections.length) {
+      setExtractionStatus("????????????????????", true);
+      setPaletteReviewStatus("没有找到稳定的色块，请换一张更清晰的截图，或者手动框选单个色块。", true);
+      return;
+    }
+
+    if (recognizedEntries.length) {
+      applyImportedPalette(recognizedEntries, file.name || "?????");
+      setExtractionStatus(`?? OCR ?????????????????? ${recognizedEntries.length} ????`);
+      setPaletteReviewStatus(`???????? ${detections.length} ???????? ${recognizedEntries.length} ?????????????`);
+      return;
+    }
+
+    setExtractionStatus("?? OCR ?????????????????????????????", true);
+    setPaletteReviewStatus("自动识别失败。请先点一个色块，再手动填写色号或重识别。", true);
+  } catch (error) {
+    setExtractionStatus("????????????????????", true);
+    console.warn(error);
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+function updateSamplingFromInputs() {
+  if (!sampleInsetInput || !sampleOffsetXInput || !sampleOffsetYInput) {
+    return;
+  }
+
+  patchState({
+    sampling: {
+      ...getState().sampling,
+      mode: sampleModeSelect?.value || "ring",
+      outerMarginRatio: clampNumber((Number.parseFloat(sampleOuterMarginInput?.value) || 10) / 100, 0.02, 0.28),
+      innerExclusionRatio: clampNumber((Number.parseFloat(sampleInsetInput.value) || 24) / 100, 0.12, 0.42),
+      offsetXRatio: clampNumber((Number.parseFloat(sampleOffsetXInput.value) || 0) / 100, -0.28, 0.28),
+      offsetYRatio: clampNumber((Number.parseFloat(sampleOffsetYInput.value) || 0) / 100, -0.28, 0.28),
+    },
+  });
+  resetAnalysis();
+}
+
+function updateRecognitionFromInputs() {
+  patchState({
+    recognition: {
+      ...getState().recognition,
+      watermarkTextAssist: Boolean(watermarkTextAssistInput?.checked),
+      excludeOuterLayers: clampNumber(Number.parseInt(excludeOuterLayersInput?.value || "0", 10) || 0, 0, 8),
+    },
+  });
+  resetAnalysis();
+}
+
+function updateAlignmentFromInputs() {
+  const state = getState();
+  patchState({
+    gridAlignment: {
+      offsetX: Number.parseFloat(gridOffsetXInput?.value) || 0,
+      offsetY: Number.parseFloat(gridOffsetYInput?.value) || 0,
+      cellWidthScale: clampNumber((Number.parseFloat(cellWidthScaleInput?.value) || 100) / 100, 0.75, 1.25),
+      cellHeightScale: clampNumber((Number.parseFloat(cellHeightScaleInput?.value) || 100) / 100, 0.75, 1.25),
+    },
+    selectedPreviewCell: clampPreviewCell(state.selectedPreviewCell, state.gridSize),
+  });
+  resetAnalysis();
+}
+
+function updatePreviewCellFromInput() {
+  patchState({
+    selectedPreviewCell: parsePreviewCellValue(previewCellInput?.value, getState().gridSize),
+  });
+}
+
+function handleSampleDemoPointerDown(event) {
+  if (!sampleDemoCanvas) {
+    return;
+  }
+
+  const rect = sampleDemoCanvas.getBoundingClientRect();
+  const localX = event.clientX - rect.left;
+  const localY = event.clientY - rect.top;
+  const cellRect = { x: 24, y: 24, width: 132, height: 132 };
+  if (
+    localX < cellRect.x ||
+    localX > cellRect.x + cellRect.width ||
+    localY < cellRect.y ||
+    localY > cellRect.y + cellRect.height
+  ) {
+    return;
+  }
+
+  patchState({
+    sampling: {
+      ...getState().sampling,
+      mode: "anchor",
+      anchorXRatio: clampNumber((localX - cellRect.x) / cellRect.width, 0.05, 0.95),
+      anchorYRatio: clampNumber((localY - cellRect.y) / cellRect.height, 0.05, 0.95),
+    },
+  });
+  resetAnalysis();
+}
+
+function handleSampleInspectPointerDown(event) {
+  if (!sampleInspectCanvas || !sampleInspectHitRegions.length) {
+    return;
+  }
+
+  const rect = sampleInspectCanvas.getBoundingClientRect();
+  const localX = event.clientX - rect.left;
+  const localY = event.clientY - rect.top;
+  const state = getState();
+
+  if (sampleInspectOverlay?.previewBox) {
+    const { previewBox, handles, handleRadius, scale } = sampleInspectOverlay;
+    let dragMode = null;
+    for (const [name, handle] of Object.entries(handles)) {
+      if (Math.hypot(localX - handle.x, localY - handle.y) <= handleRadius + 4) {
+        dragMode = name;
+        break;
+      }
+    }
+
+    if (!dragMode) {
+      const withinPreview =
+        localX >= previewBox.x &&
+        localX <= previewBox.x + previewBox.width &&
+        localY >= previewBox.y &&
+        localY <= previewBox.y + previewBox.height;
+      if (withinPreview) {
+        dragMode = "move";
+      }
+    }
+
+    if (dragMode) {
+      sampleInspectGesture = {
+        pointerId: event.pointerId,
+        mode: dragMode,
+        startX: localX,
+        startY: localY,
+        scale,
+        startAlignment: { ...(state.gridAlignment || {}) },
+        startMetrics: getEffectiveGridMetrics(state),
+      };
+      sampleInspectCanvas.setPointerCapture(event.pointerId);
+      return;
+    }
+  }
+
+  const hit = sampleInspectHitRegions.find(
+    (item) =>
+      localX >= item.drawX &&
+      localX <= item.drawX + item.drawW &&
+      localY >= item.drawY &&
+      localY <= item.drawY + item.drawH,
+  );
+
+  if (!hit) {
+    return;
+  }
+
+  patchState({
+    selectedPreviewCell: clampPreviewCell({ x: hit.x, y: hit.y }, getState().gridSize),
+  });
+}
+
+function applyInspectorDrag(localX, localY) {
+  if (!sampleInspectGesture?.startMetrics) {
+    return;
+  }
+
+  const state = getState();
+  const dxImage = (localX - sampleInspectGesture.startX) / sampleInspectGesture.scale;
+  const dyImage = (localY - sampleInspectGesture.startY) / sampleInspectGesture.scale;
+  const startAlignment = sampleInspectGesture.startAlignment;
+  const startMetrics = sampleInspectGesture.startMetrics;
+  const baseCellWidth = startMetrics.baseCellWidth;
+  const baseCellHeight = startMetrics.baseCellHeight;
+  let offsetX = Number.isFinite(startAlignment.offsetX) ? startAlignment.offsetX : 0;
+  let offsetY = Number.isFinite(startAlignment.offsetY) ? startAlignment.offsetY : 0;
+  let cellWidth = startMetrics.cellWidth;
+  let cellHeight = startMetrics.cellHeight;
+  const mode = sampleInspectGesture.mode;
+
+  if (mode === "move") {
+    offsetX += dxImage;
+    offsetY += dyImage;
+  } else {
+    if (mode.includes("e")) {
+      cellWidth += dxImage;
+    }
+    if (mode.includes("w")) {
+      cellWidth -= dxImage;
+      offsetX += dxImage;
+    }
+    if (mode.includes("s")) {
+      cellHeight += dyImage;
+    }
+    if (mode.includes("n")) {
+      cellHeight -= dyImage;
+      offsetY += dyImage;
+    }
+  }
+
+  setState((current) => ({
+    ...current,
+    gridAlignment: {
+      offsetX,
+      offsetY,
+      cellWidthScale: clampNumber(cellWidth / baseCellWidth, 0.75, 1.25),
+      cellHeightScale: clampNumber(cellHeight / baseCellHeight, 0.75, 1.25),
+    },
+    selectedPreviewCell: clampPreviewCell(state.selectedPreviewCell, state.gridSize),
+    analysis: null,
+    currentChunkIndex: 0,
+  }));
+}
+
+function handleSampleInspectPointerMove(event) {
+  if (!sampleInspectGesture || sampleInspectGesture.pointerId !== event.pointerId) {
+    return;
+  }
+
+  const rect = sampleInspectCanvas.getBoundingClientRect();
+  const localX = event.clientX - rect.left;
+  const localY = event.clientY - rect.top;
+  applyInspectorDrag(localX, localY);
+}
+
+function handleSampleInspectPointerUp(event) {
+  if (!sampleInspectGesture || sampleInspectGesture.pointerId !== event.pointerId) {
+    return;
+  }
+
+  sampleInspectCanvas?.releasePointerCapture(event.pointerId);
+  sampleInspectGesture = null;
+}
+
+function handlePaletteReviewPointerDown(event) {
+  if (!paletteReviewCanvas || !paletteReviewState.sourceCanvas || !paletteReviewState.display) {
+    return;
+  }
+
+  const point = getPaletteReviewPoint(event);
+  paletteReviewGesture = {
+    start: point,
+    active: true,
+  };
+  paletteReviewCanvas.setPointerCapture(event.pointerId);
+}
+
+function handlePaletteReviewPointerMove(event) {
+  if (!paletteReviewGesture?.active) {
+    return;
+  }
+
+  const point = getPaletteReviewPoint(event);
+  paletteReviewState.selection = {
+    ...normalizeRect(paletteReviewGesture.start, point),
+    width: Math.max(1, Math.abs(point.x - paletteReviewGesture.start.x)),
+    height: Math.max(1, Math.abs(point.y - paletteReviewGesture.start.y)),
+  };
+  paletteReviewState.activeIndex = -1;
+  paletteReviewState.manualRgb = null;
+  paletteReviewState.manualPoint = null;
+  renderPaletteReview();
+}
+
+function handlePaletteReviewPointerUp(event) {
+  if (!paletteReviewGesture?.active) {
+    return;
+  }
+
+  const point = getPaletteReviewPoint(event);
+  const dragRect = normalizeRect(paletteReviewGesture.start, point);
+  paletteReviewGesture.active = false;
+  paletteReviewCanvas.releasePointerCapture(event.pointerId);
+  paletteReviewState.manualRgb = null;
+  paletteReviewState.manualPoint = null;
+
+  if (dragRect.width < 6 && dragRect.height < 6) {
+    const hitIndex = hitPaletteDetection(point);
+    paletteReviewState.activeIndex = hitIndex;
+    if (hitIndex >= 0) {
+      const hit = paletteReviewState.detections[hitIndex];
+      paletteReviewState.selection = { ...hit.box };
+      paletteReviewState.manualRgb = hit.manualRgb ? [...hit.manualRgb] : null;
+      paletteReviewState.manualPoint = hit.manualPoint ? { ...hit.manualPoint } : null;
+      if (paletteReviewCodeInput) {
+        paletteReviewCodeInput.value = hit.code || "";
+      }
+      setPaletteReviewStatus(
+        hit.code
+          ? `????? ${hit.swatchIndex}?????? ${hit.code}???????????????????`
+          : `????? ${hit.swatchIndex}????????????????????????????`,
+        !hit.code,
+      );
+    } else {
+      paletteReviewState.selection = null;
+      setPaletteReviewStatus("已取消选择。");
+    }
+  } else {
+    paletteReviewState.selection = {
+      x: dragRect.x,
+      y: dragRect.y,
+      width: Math.max(1, dragRect.width),
+      height: Math.max(1, dragRect.height),
+    };
+    setPaletteReviewStatus("已框选一个手动区域。可以点“对框选重识别”，或者直接填色号加入色卡。");
+  }
+
+  renderPaletteReview();
+}
+
+function selectPaletteReviewIndex(index) {
+  if (index < 0 || index >= paletteReviewState.detections.length) {
+    return;
+  }
+
+  const hit = paletteReviewState.detections[index];
+  paletteReviewState.activeIndex = index;
+  paletteReviewState.selection = { ...hit.box };
+  paletteReviewState.manualRgb = hit.manualRgb ? [...hit.manualRgb] : null;
+  paletteReviewState.manualPoint = hit.manualPoint ? { ...hit.manualPoint } : null;
+  if (paletteReviewCodeInput) {
+    paletteReviewCodeInput.value = hit.code || "";
+  }
+  setPaletteReviewStatus(
+    hit.code
+      ? `???? ${index + 1} ????????? ${hit.code}?`
+      : `???? ${index + 1} ?????????????????????`,
+    !hit.code,
+  );
+  renderPaletteReview();
+}
+
+function runPaletteSelectionOcr() {
+  if ((getState().paletteReviewMode || "color-first") !== "ocr-first") {
+    setPaletteReviewStatus("当前是“颜色优先”模式。这里不会识别文字，只会按你手填色号保存。", true);
+    return;
+  }
+  const selection = paletteReviewState.selection;
+  if (!paletteReviewState.sourceCanvas || !selection || selection.width < 8 || selection.height < 8) {
+    setPaletteReviewStatus("请先框选一个足够大的色块区域。", true);
+    return;
+  }
+
+  const regionCanvas = createCanvasFromRegion(paletteReviewState.sourceCanvas, selection);
+  const localSwatch = buildManualSelectionSwatch(regionCanvas);
+  const applyMatchedResult = (matchedCode, matchedScore, modeLabel) => {
+    if (!matchedCode) {
+      setPaletteReviewStatus(`${modeLabel} ???????????????????????`, true);
+      return;
+    }
+
+    if (paletteReviewCodeInput) {
+      paletteReviewCodeInput.value = matchedCode;
+    }
+    setPaletteReviewStatus(`${modeLabel} ?????${matchedCode}??? ${(matchedScore || 0).toFixed(2)}?????????????????????????????`);
+  };
+
+  if (canUseBackendOcr()) {
+    regionCanvas.toBlob(async (blob) => {
+      if (!blob) {
+        setPaletteReviewStatus("框选区域导出失败，请重试。", true);
+        return;
+      }
+      try {
+        const backendResult = await requestBackendManualSwatchOcr(new File([blob], "manual-swatch.png", { type: "image/png" }));
+        const code = backendResult.code || "";
+        const score = backendResult.score || 0;
+        if (backendResult.sampleBox) {
+          localSwatch.box = backendResult.sampleBox;
+        }
+        applyMatchedResult(code, score, getBackendEngineLabel(backendResult.engine));
+        renderPaletteReview();
+      } catch (error) {
+        console.warn("Backend manual OCR unavailable, fallback to local OCR:", error);
+        const matched = recognizeSwatchCode(regionCanvas, localSwatch);
+        applyMatchedResult(matched?.code || "", matched?.score || 0, "???? OCR");
+        renderPaletteReview();
+      }
+    }, "image/png");
+    return;
+  }
+
+  const matched = recognizeSwatchCode(regionCanvas, localSwatch);
+  applyMatchedResult(matched?.code || "", matched?.score || 0, "???? OCR");
+  renderPaletteReview();
+}
+
+function savePaletteSelectionManually() {
+  const selection = paletteReviewState.selection;
+  const code = paletteReviewCodeInput?.value.trim().toUpperCase();
+  const reviewMode = getState().paletteReviewMode || "color-first";
+  if (!paletteReviewState.sourceCanvas || !selection || selection.width < 8 || selection.height < 8) {
+    setPaletteReviewStatus("请先框选一个色块区域。", true);
+    return;
+  }
+  if (!code) {
+    setPaletteReviewStatus(
+      reviewMode === "ocr-first"
+        ? "????????????????????????"
+        : "??????????? H9????????",
+      true,
+    );
+    return;
+  }
+
+  const regionCanvas = createCanvasFromRegion(paletteReviewState.sourceCanvas, selection);
+  const localSwatch = buildManualSelectionSwatch(regionCanvas);
+  const rgb = paletteReviewState.manualRgb ? [...paletteReviewState.manualRgb] : localSwatch.rgb;
+  mergePaletteEntries(
+    [
+      {
+        code,
+        rgb,
+        standardRgb: rgb,
+      },
+    ],
+    paletteReviewState.sourceName || "?????",
+  );
+  const nextDetection = {
+    swatchIndex: paletteReviewState.detections.length + 1,
+    rgb,
+    box: { ...selection },
+    sampleBox: {
+      x: selection.x + localSwatch.box.x,
+      y: selection.y + localSwatch.box.y,
+      width: localSwatch.box.width,
+      height: localSwatch.box.height,
+    },
+    manualRgb: paletteReviewState.manualRgb ? [...paletteReviewState.manualRgb] : null,
+    manualPoint: paletteReviewState.manualPoint ? { ...paletteReviewState.manualPoint } : null,
+    code,
+    score: 1,
+  };
+  const activeDetection =
+    paletteReviewState.activeIndex >= 0 ? paletteReviewState.detections[paletteReviewState.activeIndex] : null;
+  const shouldReplaceActive =
+    Boolean(activeDetection) &&
+    Math.abs(activeDetection.box.x - selection.x) < 1 &&
+    Math.abs(activeDetection.box.y - selection.y) < 1 &&
+    Math.abs(activeDetection.box.width - selection.width) < 1 &&
+    Math.abs(activeDetection.box.height - selection.height) < 1;
+  if (shouldReplaceActive) {
+    paletteReviewState.detections[paletteReviewState.activeIndex] = {
+      ...nextDetection,
+      swatchIndex: activeDetection.swatchIndex,
+    };
+  } else {
+    paletteReviewState.detections.push(nextDetection);
+    paletteReviewState.activeIndex = paletteReviewState.detections.length - 1;
+  }
+  setPaletteReviewStatus(
+    shouldReplaceActive
+      ? `????????? ${code}???????????????`
+      : `?????????????????????${code}?${reviewMode === "ocr-first" ? "???????/????????" : "????????? + ?????????"}`,
+  );
+  saveStateToStorage();
+  renderPaletteReview();
+}
+
+function applyCrop() {
+  const state = getState();
+  if (!state.crop || !state.image.element) {
+    return;
+  }
+  patchState({ cropConfirmed: true });
+  resetAnalysis();
+}
+
+function handleMinimapClick(event) {
+  const state = getState();
+  if (!state.analysis || !minimapCanvas) {
+    return;
+  }
+
+  const nextIndex = resolveChunkIndexFromMapPoint(minimapCanvas, event, state.analysis);
+  if (nextIndex >= 0) {
+    patchState({ currentChunkIndex: nextIndex });
+  }
+}
+
+function handleOverviewClick(event) {
+  const state = getState();
+  if (!state.analysis || !overviewCanvas) {
+    return;
+  }
+
+  const gridPosition = resolveGridPositionFromMapPoint(overviewCanvas, event, state.analysis);
+  const nextIndex = resolveChunkIndexFromMapPoint(overviewCanvas, event, state.analysis);
+  if (nextIndex >= 0 || gridPosition) {
+    patchState({
+      currentChunkIndex: nextIndex >= 0 ? nextIndex : state.currentChunkIndex,
+      selectedPreviewCell: gridPosition ? clampPreviewCell(gridPosition, state.gridSize) : state.selectedPreviewCell,
+    });
+  }
+}
+
+function setGridSize() {
+  const gridSize = {
+    width: Math.max(1, Number.parseInt(gridWidthInput.value, 10) || 1),
+    height: Math.max(1, Number.parseInt(gridHeightInput.value, 10) || 1),
+  };
+  patchState({
+    gridSize,
+    selectedPreviewCell: clampPreviewCell(getState().selectedPreviewCell, gridSize),
+  });
+  resetAnalysis();
+}
+
+async function handleImageUpload(event) {
+  const file = event.target.files?.[0];
+  if (!file) {
+    setImagePickHint("??????????????????????????????", true);
+    return;
+  }
+
+  const objectUrl = URL.createObjectURL(file);
+  const reader = new FileReader();
+  const dataUrl = await new Promise((resolve, reject) => {
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+  const image = new Image();
+  image.decoding = "async";
+  image.src = objectUrl;
+  await image.decode();
+  URL.revokeObjectURL(objectUrl);
+
+  setState((state) => ({
+    ...state,
+    image: {
+      element: image,
+      width: image.naturalWidth,
+      height: image.naturalHeight,
+    },
+    originalCanvas: createImageBitmapCanvas(image),
+    cropDisplay: buildCropDisplay({
+      width: image.naturalWidth,
+      height: image.naturalHeight,
+    }),
+    crop: {
+      x: 0,
+      y: 0,
+      width: image.naturalWidth,
+      height: image.naturalHeight,
+    },
+    cropConfirmed: false,
+    analysis: null,
+    currentChunkIndex: 0,
+    pickerMode: false,
+    storedImage: createStoredImageRecord(dataUrl, image),
+  }));
+  setImagePickHint(`宸茶浇鍏ュ浘鐗囷細${file.name}`);
+}
+
+function resetCropToFullImage() {
+  const state = getState();
+  if (!state.image.width || !state.image.height) {
+    return;
+  }
+
+  patchState({
+    crop: {
+      x: 0,
+      y: 0,
+      width: state.image.width,
+      height: state.image.height,
+    },
+    cropConfirmed: false,
+  });
+  resetAnalysis();
+}
+
+function addPaletteEntry() {
+  const code = paletteCodeInput.value.trim().toUpperCase();
+  const rgb = parseRgbText(paletteRgbInput.value) || hexToRgb(paletteColorInput.value);
+
+  if (!code) {
+    window.alert("Please enter a color code such as H07.");
+    return;
+  }
+
+  patchState({
+    palette: [
+      ...getState().palette.filter((item) => item.code !== code),
+      { code, rgb },
+    ],
+  });
+
+  paletteCodeInput.value = "";
+  resetAnalysis();
+}
+
+function sampleColorAtPoint(point) {
+  const state = getState();
+  if (!state.originalCanvas) {
+    return;
+  }
+
+  const ctx = state.originalCanvas.getContext("2d", { willReadFrequently: true });
+  const pixel = ctx.getImageData(Math.floor(point.x), Math.floor(point.y), 1, 1).data;
+  const rgb = [pixel[0], pixel[1], pixel[2]];
+  paletteColorInput.value = rgbToHex(rgb);
+  paletteRgbInput.value = formatRgb(rgb);
+  patchState({ pickerMode: false });
+}
+
+function handleCropPointerDown(event) {
+  const state = getState();
+  if (!state.image.element || !state.cropDisplay) {
+    return;
+  }
+
+  if (state.pickerMode) {
+    const point = getCanvasEventPoint(event, state.cropDisplay);
+    sampleColorAtPoint(point);
+    rerender();
+    return;
+  }
+
+  if (state.cropConfirmed) {
+    const canvasWidth = cropCanvas.clientWidth || state.cropDisplay.drawWidth;
+    const canvasHeight = Math.max(320, cropCanvas.clientHeight || state.cropDisplay.drawHeight);
+    const zoomScale = Math.min(canvasWidth / state.crop.width, canvasHeight / state.crop.height);
+    const zoomWidth = state.crop.width * zoomScale;
+    const zoomHeight = state.crop.height * zoomScale;
+    const originX = (canvasWidth - zoomWidth) / 2;
+    const originY = (canvasHeight - zoomHeight) / 2;
+    const rect = cropCanvas.getBoundingClientRect();
+    const localX = event.clientX - rect.left;
+    const localY = event.clientY - rect.top;
+
+    if (
+      localX >= originX &&
+      localX <= originX + zoomWidth &&
+      localY >= originY &&
+      localY <= originY + zoomHeight
+    ) {
+      const imageX = state.crop.x + (localX - originX) / zoomScale;
+      const imageY = state.crop.y + (localY - originY) / zoomScale;
+      const metrics = getEffectiveGridMetrics(state);
+      if (metrics) {
+        patchState({
+          selectedPreviewCell: clampPreviewCell(
+            {
+              x: Math.floor((imageX - metrics.originX) / metrics.cellWidth) + 1,
+              y: Math.floor((imageY - metrics.originY) / metrics.cellHeight) + 1,
+            },
+            state.gridSize,
+          ),
+        });
+      }
+    }
+    return;
+  }
+
+  const point = getCanvasEventPoint(event, state.cropDisplay);
+
+  cropGesture = {
+    start: point,
+    active: true,
+  };
+  cropCanvas.setPointerCapture(event.pointerId);
+  patchState({ crop: { x: point.x, y: point.y, width: 1, height: 1 } });
+}
+
+function handleCropPointerMove(event) {
+  const state = getState();
+  if (!cropGesture?.active || !state.cropDisplay) {
+    return;
+  }
+
+  const point = getCanvasEventPoint(event, state.cropDisplay);
+  const crop = normalizeRect(cropGesture.start, point);
+  patchState({
+    crop: {
+      ...crop,
+      width: Math.max(1, crop.width),
+      height: Math.max(1, crop.height),
+    },
+  });
+  resetAnalysis();
+}
+
+function handleCropPointerUp(event) {
+  if (!cropGesture?.active) {
+    return;
+  }
+
+  cropGesture.active = false;
+  cropCanvas.releasePointerCapture(event.pointerId);
+}
+
+function handleAnalyze() {
+  const state = getState();
+  if (!state.originalCanvas || !state.crop || !state.palette.length) {
+    return;
+  }
+
+  try {
+    patchState({
+      analysis: analyzeGrid({
+      originalCanvas: state.originalCanvas,
+      crop: state.crop,
+      gridSize: state.gridSize,
+      palette: state.palette,
+      sampling: state.sampling,
+      recognition: state.recognition,
+      gridAlignment: state.gridAlignment,
+      overrides: state.manualOverrides || {},
+    }),
+      currentChunkIndex: 0,
+      seedAssist: {
+        ...state.seedAssist,
+        candidates: [],
+      },
+    });
+  } catch (error) {
+    console.error("Grid analyze failed:", error);
+    parseStatus.textContent = `瑙ｆ瀽澶辫触锛?{error?.message || "鏈煡閿欒"}`;
+  }
+}
+
+function moveChunk(step) {
+  const state = getState();
+  if (!state.analysis) {
+    return;
+  }
+
+  const nextIndex = Math.min(
+    state.analysis.chunks.length - 1,
+    Math.max(0, state.currentChunkIndex + step),
+  );
+  patchState({ currentChunkIndex: nextIndex });
+}
+
+function moveChunkByGrid(deltaCol, deltaRow) {
+  const state = getState();
+  if (!state.analysis) {
+    return;
+  }
+
+  const currentChunk = state.analysis.chunks[state.currentChunkIndex];
+  const chunkCols = Math.ceil(state.analysis.gridWidth / 5);
+  const chunkRows = Math.ceil(state.analysis.gridHeight / 5);
+  const targetCol = clampNumber(currentChunk.chunkCol + deltaCol, 1, chunkCols);
+  const targetRow = clampNumber(currentChunk.chunkRow + deltaRow, 1, chunkRows);
+  const nextIndex = getChunkIndexByGridPosition(state.analysis, targetCol, targetRow);
+
+  if (nextIndex >= 0) {
+    patchState({ currentChunkIndex: nextIndex });
+  }
+}
+
+function handleViewerPointerDown(event) {
+  if (!getState().analysis) {
+    return;
+  }
+
+  viewerSwipeStart = getViewerPoint(event);
+}
+
+function handleViewerPointerUp(event) {
+  if (!viewerSwipeStart) {
+    return;
+  }
+
+  const endPoint = getViewerPoint(event);
+  const deltaX = endPoint.x - viewerSwipeStart.x;
+  const deltaY = endPoint.y - viewerSwipeStart.y;
+  viewerSwipeStart = null;
+
+  if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > 48) {
+    moveChunkByGrid(deltaX < 0 ? 1 : -1, 0);
+    return;
+  }
+
+  if (Math.abs(deltaY) > 48) {
+    moveChunkByGrid(0, deltaY < 0 ? 1 : -1);
+  }
+}
+
+function downloadAnalysisJson() {
+  const { analysis } = getState();
+  if (!analysis) {
+    return;
+  }
+
+  const payload = {
+    gridWidth: analysis.gridWidth,
+    gridHeight: analysis.gridHeight,
+    crop: analysis.crop,
+    cellWidth: analysis.cellWidth,
+    cellHeight: analysis.cellHeight,
+    globalStats: analysis.globalStats,
+    chunks: analysis.chunks,
+    cells: analysis.cells,
+  };
+
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "perler-grid-analysis.json";
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function bindEvents() {
+  for (const button of tabBtns) {
+    button.addEventListener("click", (event) => {
+      if (event.currentTarget.disabled) {
+        return;
+      }
+      switchTab(event.currentTarget.dataset.tab);
+    });
+  }
+
+  imageInput.addEventListener("change", handleImageUpload);
+  imagePickBtn?.addEventListener("click", openImagePicker);
+  gridWidthInput.addEventListener("input", setGridSize);
+  gridHeightInput.addEventListener("input", setGridSize);
+  applyCropBtn?.addEventListener("click", applyCrop);
+  resetCropBtn.addEventListener("click", resetCropToFullImage);
+  paletteColorInput.addEventListener("input", () => {
+    paletteRgbInput.value = formatRgb(hexToRgb(paletteColorInput.value));
+  });
+  paletteRgbInput.value = formatRgb(hexToRgb(paletteColorInput.value));
+  addPaletteBtn.addEventListener("click", addPaletteEntry);
+  pickColorBtn.addEventListener("click", () => patchState({ pickerMode: !getState().pickerMode }));
+  togglePaletteBtn?.addEventListener("click", togglePalette);
+  paletteSearchInput?.addEventListener("input", filterPalette);
+  paletteImportModeSelect?.addEventListener("change", () => {
+    patchState({ paletteImportMode: paletteImportModeSelect.value });
+  });
+  paletteReviewModeSelect?.addEventListener("change", () => {
+    patchState({ paletteReviewMode: paletteReviewModeSelect.value });
+    setPaletteReviewStatus(
+      paletteReviewModeSelect.value === "ocr-first"
+        ? "?????????????????????????? OCR???????????????"
+        : "??????????????????????????? + ?????????",
+    );
+  });
+  extractLegendBtn?.addEventListener("click", extractPaletteFromLegendArea);
+  uploadPaletteImageBtn?.addEventListener("click", () => paletteImageInput?.click());
+  paletteImageInput?.addEventListener("change", (event) => {
+    extractPaletteFromUploadedImage(event.target.files?.[0]);
+    event.target.value = "";
+  });
+  paletteReviewRetryBtn?.addEventListener("click", runPaletteSelectionOcr);
+  paletteReviewSaveBtn?.addEventListener("click", savePaletteSelectionManually);
+  paletteReviewDeleteBtn?.addEventListener("click", deleteActivePaletteReviewDetection);
+  paletteReviewDetailCanvas?.addEventListener("pointerdown", handlePaletteReviewDetailPointerDown);
+  paletteReviewResetColorBtn?.addEventListener("click", resetPaletteReviewManualColor);
+  paletteReviewClearBtn?.addEventListener("click", () => {
+    paletteReviewState.selection = null;
+    paletteReviewState.manualRgb = null;
+    paletteReviewState.manualPoint = null;
+    paletteReviewState.activeIndex = -1;
+    if (paletteReviewCodeInput) {
+      paletteReviewCodeInput.value = "";
+    }
+    setPaletteReviewStatus("已清除当前框选。");
+    renderPaletteReview();
+    saveStateToStorage();
+  });
+  paletteReviewList?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-review-index]");
+    if (!button) {
+      return;
+    }
+    selectPaletteReviewIndex(Number.parseInt(button.dataset.reviewIndex, 10));
+  });
+  sampleOverlayToggle?.addEventListener("click", () => {
+    patchState({ showSamplingOverlay: !getState().showSamplingOverlay });
+  });
+  sampleModeSelect?.addEventListener("change", updateSamplingFromInputs);
+  sampleOuterMarginInput?.addEventListener("input", updateSamplingFromInputs);
+  sampleInsetInput?.addEventListener("input", updateSamplingFromInputs);
+  sampleOffsetXInput?.addEventListener("input", updateSamplingFromInputs);
+  sampleOffsetYInput?.addEventListener("input", updateSamplingFromInputs);
+  sampleInspectWindowSelect?.addEventListener("change", () => {
+    patchState({
+      sampleInspectWindow: clampNumber(Number.parseInt(sampleInspectWindowSelect.value || "3", 10) || 3, 3, 11),
+    });
+  });
+  watermarkTextAssistInput?.addEventListener("change", updateRecognitionFromInputs);
+  excludeOuterLayersInput?.addEventListener("input", updateRecognitionFromInputs);
+  sampleDemoCanvas?.addEventListener("pointerdown", handleSampleDemoPointerDown);
+  sampleInspectCanvas?.addEventListener("pointerdown", handleSampleInspectPointerDown);
+  sampleInspectCanvas?.addEventListener("pointermove", handleSampleInspectPointerMove);
+  sampleInspectCanvas?.addEventListener("pointerup", handleSampleInspectPointerUp);
+  sampleInspectCanvas?.addEventListener("pointercancel", handleSampleInspectPointerUp);
+  seedTargetCodeSelect?.addEventListener("change", () => {
+    patchState({
+      seedAssist: {
+        ...getState().seedAssist,
+        targetCode: seedTargetCodeSelect.value,
+        targetSeeds: [],
+        candidates: [],
+        targetPrototypeRgb: null,
+      },
+    });
+  });
+  seedContrastCodeSelect?.addEventListener("change", () => {
+    patchState({
+      seedAssist: {
+        ...getState().seedAssist,
+        contrastCode: seedContrastCodeSelect.value,
+        contrastSeeds: [],
+        candidates: [],
+        contrastPrototypeRgb: null,
+      },
+    });
+  });
+  seedThresholdInput?.addEventListener("input", () => {
+    patchState({
+      seedAssist: {
+        ...getState().seedAssist,
+        threshold: Number.parseFloat(seedThresholdInput.value) || 8,
+      },
+    });
+  });
+  seedAddTargetBtn?.addEventListener("click", () => addCurrentCellAsSeed("target"));
+  seedAddContrastBtn?.addEventListener("click", () => addCurrentCellAsSeed("contrast"));
+  seedAnalyzeBtn?.addEventListener("click", analyzeSeedCandidates);
+  seedApplyBtn?.addEventListener("click", applySeedCandidates);
+  seedClearBtn?.addEventListener("click", () => {
+    patchState({
+      seedAssist: {
+        ...getState().seedAssist,
+        targetSeeds: [],
+        contrastSeeds: [],
+        candidates: [],
+        targetPrototypeRgb: null,
+        contrastPrototypeRgb: null,
+      },
+    });
+  });
+  seedResetOverridesBtn?.addEventListener("click", clearManualOverrides);
+  [seedTargetList, seedContrastList].filter(Boolean).forEach((listEl) => listEl.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-seed-index]");
+    if (!button) {
+      return;
+    }
+    const index = Number.parseInt(button.dataset.seedIndex, 10);
+    const state = getState();
+    const type = button.dataset.seedType === "contrast" ? "contrast" : "target";
+    const seeds = type === "contrast" ? state.seedAssist?.contrastSeeds || [] : state.seedAssist?.targetSeeds || [];
+    const seed = seeds[index];
+    if (!seed) {
+      return;
+    }
+    patchState({
+      selectedPreviewCell: clampPreviewCell({ x: seed.x, y: seed.y }, state.gridSize),
+    });
+  }));
+  seedCandidateList?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-seed-candidate-index]");
+    if (!button) {
+      return;
+    }
+    const index = Number.parseInt(button.dataset.seedCandidateIndex, 10);
+    const item = getState().seedAssist?.candidates?.[index];
+    if (!item) {
+      return;
+    }
+    patchState({
+      selectedPreviewCell: clampPreviewCell({ x: item.x, y: item.y }, getState().gridSize),
+    });
+  });
+  gridOffsetXInput?.addEventListener("input", updateAlignmentFromInputs);
+  gridOffsetYInput?.addEventListener("input", updateAlignmentFromInputs);
+  cellWidthScaleInput?.addEventListener("input", updateAlignmentFromInputs);
+  cellHeightScaleInput?.addEventListener("input", updateAlignmentFromInputs);
+  previewCellInput?.addEventListener("change", updatePreviewCellFromInput);
+  resetAlignmentBtn?.addEventListener("click", () => {
+    patchState({
+      gridAlignment: {
+        offsetX: 0,
+        offsetY: 0,
+        cellWidthScale: 1,
+        cellHeightScale: 1,
+      },
+      selectedPreviewCell: { x: 1, y: 1 },
+    });
+    resetAnalysis();
+  });
+  paletteList.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-remove-index]");
+    if (!button) {
+      return;
+    }
+
+    const index = Number.parseInt(button.dataset.removeIndex, 10);
+    patchState({ palette: getState().palette.filter((_, itemIndex) => itemIndex !== index) });
+    resetAnalysis();
+  });
+  analyzeBtn.addEventListener("click", () => {
+    handleAnalyze();
+    if (getState().analysis && tabStep4Btn && !tabStep4Btn.disabled) {
+      switchTab("tab-step4");
+    }
+  });
+  downloadJsonBtn.addEventListener("click", downloadAnalysisJson);
+  strategySelect.addEventListener("change", () => patchState({ strategyType: strategySelect.value }));
+  prevChunkBtn.addEventListener("click", () => moveChunk(-1));
+  nextChunkBtn.addEventListener("click", () => moveChunk(1));
+  moveUpBtn?.addEventListener("click", () => moveChunkByGrid(0, -1));
+  moveLeftBtn?.addEventListener("click", () => moveChunkByGrid(-1, 0));
+  moveRightBtn?.addEventListener("click", () => moveChunkByGrid(1, 0));
+  moveDownBtn?.addEventListener("click", () => moveChunkByGrid(0, 1));
+  focusColorSelect?.addEventListener("change", () => patchState({ focusColorCode: focusColorSelect.value }));
+  focusTopColorBtn?.addEventListener("click", () => {
+    const topCode = getState().analysis?.globalStats?.[0]?.code || "";
+    patchState({ focusColorCode: topCode });
+  });
+  clearFocusColorBtn?.addEventListener("click", () => patchState({ focusColorCode: "" }));
+  markerPresetSelect?.addEventListener("change", () => patchState({ markerPreset: markerPresetSelect.value }));
+  cropCanvas.addEventListener("pointerdown", handleCropPointerDown);
+  cropCanvas.addEventListener("pointermove", handleCropPointerMove);
+  cropCanvas.addEventListener("pointerup", handleCropPointerUp);
+  cropCanvas.addEventListener("pointercancel", handleCropPointerUp);
+  paletteReviewCanvas?.addEventListener("pointerdown", handlePaletteReviewPointerDown);
+  paletteReviewCanvas?.addEventListener("pointermove", handlePaletteReviewPointerMove);
+  paletteReviewCanvas?.addEventListener("pointerup", handlePaletteReviewPointerUp);
+  paletteReviewCanvas?.addEventListener("pointercancel", handlePaletteReviewPointerUp);
+  viewerCanvas.addEventListener("pointerdown", handleViewerPointerDown);
+  viewerCanvas.addEventListener("pointerup", handleViewerPointerUp);
+  minimapCanvas?.addEventListener("click", handleMinimapClick);
+  overviewCanvas?.addEventListener("click", handleOverviewClick);
+  window.addEventListener("resize", () => {
+    const state = getState();
+    if (!state.image.element) {
+      rerender();
+      return;
+    }
+
+    patchState({
+      cropDisplay: buildCropDisplay({
+        width: state.image.width,
+        height: state.image.height,
+      }),
+    });
+  });
+}
+
+injectEnhancementControls();
+subscribe((state) => {
+  rerender(state);
+  saveStateToStorage();
+});
+bindEvents();
+restoreStateFromStorage().finally(() => {
+  rerender();
+});

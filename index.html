@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>拼豆图纸智能辅助解析与导览系统</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="hero">
+        <p class="eyebrow">Perler Beads Assistant</p>
+        <h1>拼豆图纸智能辅助解析与导览系统</h1>
+      </header>
+
+      <!-- 横向导航栏 -->
+      <nav class="tab-bar">
+        <button class="tab-btn active" data-tab="tab-step1">
+          <span class="tab-num">1</span> 导入与裁剪
+        </button>
+        <button class="tab-btn" data-tab="tab-step2">
+          <span class="tab-num">2</span> 色卡管理
+          <span class="tab-badge" id="tabPaletteBadge">221色</span>
+        </button>
+        <button class="tab-btn" data-tab="tab-step3">
+          <span class="tab-num">3</span> 解析统计
+        </button>
+        <button class="tab-btn" data-tab="tab-step4" disabled>
+          <span class="tab-num">4</span> 5x5 导览
+        </button>
+      </nav>
+
+      <main class="layout">
+        <!-- Step 1: 图像导入与网格裁剪 -->
+        <section class="panel tab-panel active" id="tab-step1">
+          <div class="panel-head">
+            <h2>图像导入与网格裁剪</h2>
+            <span class="status-pill" id="imageStatus">未加载图片</span>
+          </div>
+
+          <div class="field-grid">
+            <label class="field field-upload">
+              <span>上传图纸</span>
+              <input id="imageInput" type="file" accept="image/*" />
+            </label>
+            <label class="field">
+              <span>网格宽度</span>
+              <input id="gridWidthInput" type="number" min="1" value="40" inputmode="numeric" />
+            </label>
+            <label class="field">
+              <span>网格高度</span>
+              <input id="gridHeightInput" type="number" min="1" value="40" inputmode="numeric" />
+            </label>
+          </div>
+
+          <div class="button-row" style="margin-top:12px;">
+            <label for="imageInput" class="file-pick-label">直接打开系统选图</label>
+            <button id="imagePickBtn" type="button">从相册选择图片</button>
+            <span class="empty-text" id="imagePickHint">平板上优先点这个按钮打开系统图片选择器。</span>
+          </div>
+
+          <div class="canvas-card">
+            <div class="canvas-meta">
+              <p>拖拽裁剪框选取纯网格区域，然后点「确认裁剪」。支持触屏和鼠标。</p>
+              <div class="btn-group">
+                <button id="applyCropBtn" type="button">确认裁剪</button>
+                <button id="resetCropBtn" class="ghost-btn" type="button">重置</button>
+              </div>
+            </div>
+            <canvas id="cropCanvas" aria-label="图纸裁剪画布"></canvas>
+          </div>
+
+          <div class="meta-grid">
+            <div class="meta-box"><span>原图尺寸</span><strong id="imageSizeText">-</strong></div>
+            <div class="meta-box"><span>裁剪区域</span><strong id="cropInfoText">-</strong></div>
+            <div class="meta-box"><span>单格尺寸</span><strong id="cellSizeText">-</strong></div>
+          </div>
+        </section>
+
+        <!-- Step 2: 色卡录入与颜色拾取 -->
+        <section class="panel tab-panel" id="tab-step2">
+          <div class="panel-head">
+            <h2>色卡录入与颜色拾取</h2>
+            <span class="status-pill muted" id="paletteStatus">221 个色号</span>
+          </div>
+
+          <div class="field-grid palette-grid">
+            <label class="field">
+              <span>色号</span>
+              <input id="paletteCodeInput" type="text" maxlength="12" placeholder="例如 H07" />
+            </label>
+            <label class="field">
+              <span>颜色</span>
+              <input id="paletteColorInput" type="color" value="#577799" />
+            </label>
+            <label class="field">
+              <span>RGB</span>
+              <input id="paletteRgbInput" type="text" placeholder="87,119,153" />
+            </label>
+          </div>
+
+          <div class="button-row">
+            <button id="pickColorBtn" class="ghost-btn" type="button">从图片取色</button>
+            <button id="addPaletteBtn" type="button">加入色卡</button>
+          </div>
+
+          <!-- 色卡列表折叠区 -->
+          <div class="palette-collapse-bar">
+            <button id="togglePaletteBtn" class="ghost-btn" type="button">
+              <span id="togglePaletteIcon">▼</span> 展开色卡列表（221 色）
+            </button>
+            <input id="paletteSearchInput" type="text" class="palette-search" placeholder="搜索色号..." style="display:none;" />
+          </div>
+          <div id="paletteList" class="palette-list" style="display:none;"></div>
+        </section>
+
+        <!-- Step 3: 解析与统计 -->
+        <section class="panel tab-panel" id="tab-step3">
+          <div class="panel-head">
+            <h2>解析与统计</h2>
+            <span class="status-pill muted" id="parseStatus">等待解析</span>
+          </div>
+
+          <div class="button-row">
+            <button id="analyzeBtn" type="button">解析整张网格</button>
+            <button id="downloadJsonBtn" class="ghost-btn" type="button">导出 JSON</button>
+          </div>
+
+          <div id="analysisSummary" class="summary-card empty">
+            解析完成后，这里会显示全图概况、当前区块信息和智能建议。
+          </div>
+        </section>
+
+        <!-- Step 4: 5x5 导览与智能拼搭建议 -->
+        <section class="panel tab-panel" id="tab-step4">
+          <div class="panel-head">
+            <h2>5x5 导览与智能拼搭建议</h2>
+            <div class="panel-head-right">
+              <label class="strategy-switch">
+                <span>策略</span>
+                <select id="strategySelect">
+                  <option value="color-fill">策略 A：按颜色填涂</option>
+                  <option value="edge-first">策略 B：从边缘到中心</option>
+                </select>
+              </label>
+            </div>
+          </div>
+
+          <div class="viewer-toolbar">
+            <div class="chunk-pad">
+              <button id="moveUpBtn" class="ghost-btn" type="button">上</button>
+              <div class="chunk-pad-row">
+                <button id="moveLeftBtn" class="ghost-btn" type="button">左</button>
+                <button id="moveRightBtn" class="ghost-btn" type="button">右</button>
+              </div>
+              <button id="moveDownBtn" class="ghost-btn" type="button">下</button>
+            </div>
+            <div class="viewer-status">
+              <strong id="chunkLabel">-</strong>
+              <span id="chunkCoordLabel">-</span>
+            </div>
+            <div class="button-row">
+              <button id="prevChunkBtn" class="ghost-btn" type="button">上一个</button>
+              <button id="nextChunkBtn" class="ghost-btn" type="button">下一个</button>
+            </div>
+          </div>
+
+          <div class="summary-card" style="margin-bottom:12px;">
+            <h3>整体大图模式</h3>
+            <div class="field-grid" style="margin-top:12px;">
+              <label class="field">
+                <span>颜色筛选</span>
+                <select id="focusColorSelect">
+                  <option value="">显示全部颜色</option>
+                </select>
+              </label>
+              <div class="field">
+                <span>快速操作</span>
+                <div class="button-row">
+                  <button id="focusTopColorBtn" class="ghost-btn" type="button">最多颜色</button>
+                  <button id="clearFocusColorBtn" class="ghost-btn" type="button">清除筛选</button>
+                </div>
+              </div>
+              <div class="field">
+                <span>说明</span>
+                <p class="empty-text" id="focusColorSummary">可筛选某一个颜色，只看它在全图和当前 5x5 中的位置。</p>
+              </div>
+            </div>
+            <div class="viewer-card" style="margin-top:12px;">
+              <canvas id="overviewCanvas" aria-label="整体大图模式画布"></canvas>
+              <p class="viewer-tip">点击整体大图可跳转到对应 5x5 区块。筛选颜色后，其他颜色会被压暗。</p>
+            </div>
+          </div>
+
+          <div class="viewer-layout">
+            <div class="minimap-card">
+              <canvas id="minimapCanvas" aria-label="全局缩略图"></canvas>
+              <p class="minimap-tip">红框 = 当前区块</p>
+            </div>
+            <div class="viewer-card">
+              <canvas id="viewerCanvas" aria-label="5x5 区块导览画布"></canvas>
+            </div>
+          </div>
+          <p class="viewer-tip">点击缩略图可跳转区块，彩色描边 = 当前智能建议重点格子。</p>
+
+          <div class="stats-grid">
+            <section class="stats-card">
+              <h3>当前 5x5 用量</h3>
+              <div id="localStats"></div>
+            </section>
+            <section class="stats-card">
+              <h3>智能建议</h3>
+              <div id="planPanel"></div>
+            </section>
+          </div>
+
+          <details class="global-stats">
+            <summary>查看全局颜色统计</summary>
+            <div id="globalStats"></div>
+          </details>
+        </section>
+      </main>
+    </div>
+
+    <script src="./js/palette-data.js"></script>
+    <script type="module" src="./js/app.js"></script>
+  </body>
+</html>
