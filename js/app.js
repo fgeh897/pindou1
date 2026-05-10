@@ -388,9 +388,38 @@ function getBackendEngineLabel(engineName) {
   return `后端 OCR（${engineName}）`;
 }
 
+
+async function resizeImageForOcr(file) {
+  const MAX_SIZE = 1600;
+  const MAX_BYTES = 200 * 1024;
+  if (file.size <= MAX_BYTES) return file;
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      let w = img.naturalWidth, h = img.naturalHeight;
+      if (w > MAX_SIZE || h > MAX_SIZE) {
+        const ratio = Math.min(MAX_SIZE / w, MAX_SIZE / h);
+        w = Math.round(w * ratio); h = Math.round(h * ratio);
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      canvas.toBlob((blob) => {
+        resolve(new File([blob], file.name || 'ocr.jpg', { type: 'image/jpeg' }));
+      }, 'image/jpeg', 0.85);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+    img.src = url;
+  });
+}
+
 async function requestBackendPaletteOcr(file) {
-  const formData = new FormData();
-  formData.append("file", file);
+  const resized = await resizeImageForOcr(file);
+  console.log("[OCR] Original:", file.size, "bytes -> Resized:", resized.size, "bytes");
+  const formData = new FormData();
+  formData.append("file", resized);
   const response = await fetch(BACKEND_PALETTE_OCR_URL, {
     method: "POST",
     body: formData,
