@@ -194,7 +194,7 @@ let paletteReviewState = {
 
 const STORAGE_KEY = "pindou-assistant-state-v1";
 const SERVER_STATE_URL = window.__PIN_DOU_CLOUD_STATE_URL__ || "/api/state";
-const OCR_API_BASE_URL = (window.__PIN_DOU_OCR_API_BASE_URL__ || "").replace(/\/$/, "");
+const OCR_API_BASE_URL = "https://pindou1-1.onrender.com";
 const BACKEND_PALETTE_OCR_URL = `${OCR_API_BASE_URL}/api/ocr/palette-card`;
 const BACKEND_MANUAL_SWATCH_OCR_URL = `${OCR_API_BASE_URL}/api/ocr/manual-swatch`;
 const BACKEND_PALETTE_GRID_OCR_URL = `${OCR_API_BASE_URL}/api/ocr/palette-grid`;
@@ -7256,4 +7256,4 @@ restoreStateFromStorage().finally(() => {
   switchTab("tab-library");
   rerender();
 });
-好像没有我去 但是我后面版本有 可能没更新
+
