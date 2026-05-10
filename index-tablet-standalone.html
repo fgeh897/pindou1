@@ -2210,8 +2210,9 @@ let paletteReviewState = {
 };
 
 const STORAGE_KEY = "pindou-assistant-state-v1";
-const BACKEND_PALETTE_OCR_URL = "/api/ocr/palette-card";
-const BACKEND_MANUAL_SWATCH_OCR_URL = "/api/ocr/manual-swatch";
+const OCR_API_BASE_URL = window.__PIN_DOU_OCR_API_BASE_URL__ || "https://pindou1-1.onrender.com";
+const BACKEND_PALETTE_OCR_URL = `${OCR_API_BASE_URL}/api/ocr/palette-card`;
+const BACKEND_MANUAL_SWATCH_OCR_URL = `${OCR_API_BASE_URL}/api/ocr/manual-swatch`;
 
 function ensureCanvasSize(canvas, width, height) {
   const dpr = window.devicePixelRatio || 1;
@@ -2302,7 +2303,7 @@ function openImagePicker() {
 }
 
 function canUseBackendOcr() {
-  return window.location.protocol === "http:" || window.location.protocol === "https:";
+  return true;
 }
 
 function getBackendEngineLabel(engineName) {
