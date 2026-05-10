@@ -198,6 +198,10 @@ const SERVER_STATE_URL = window.__PIN_DOU_CLOUD_STATE_URL__ || "/api/state";
 const BACKEND_PALETTE_OCR_URL = `${OCR_API_BASE_URL}/api/ocr/palette-card`;
 const BACKEND_MANUAL_SWATCH_OCR_URL = `${OCR_API_BASE_URL}/api/ocr/manual-swatch`;
 const BACKEND_PALETTE_GRID_OCR_URL = `${OCR_API_BASE_URL}/api/ocr/palette-grid`;
+
+console.log("[OCR] Config: OCR_API_BASE_URL =", OCR_API_BASE_URL);
+console.log("[OCR] Config: canUseBackendOcr =", canUseBackendOcr());
+console.log("[OCR] Config: protocol =", window.location.protocol);
 const PROJECT_STATUS_LABELS = {
   todo: "未拼",
   doing: "拼到一半",
@@ -389,19 +393,38 @@ function getBackendEngineLabel(engineName) {
 }
 
 async function requestBackendPaletteOcr(file) {
-  const formData = new FormData();
-  formData.append("file", file);
-  const response = await fetch(BACKEND_PALETTE_OCR_URL, {
-    method: "POST",
-    body: formData,
-  });
+  console.log("[OCR] Calling backend:", BACKEND_PALETTE_OCR_URL);
+  console.log("[OCR] File:", file.name, file.type, file.size, "bytes");
 
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const message = payload?.ocrError || payload?.detail || `OCR request failed (${response.status})`;
-    throw new Error(message);
-  }
-  return payload;
+  const formData = new FormData();
+  formData.append("file", file);
+
+  let response;
+  try {
+    response = await fetch(BACKEND_PALETTE_OCR_URL, {
+      method: "POST",
+      body: formData,
+    });
+  } catch (networkErr) {
+    console.error("[OCR] Network error:", networkErr);
+    const msg = "Network error: cannot reach " + BACKEND_PALETTE_OCR_URL + " - " + (networkErr.message || String(networkErr));
+    throw new Error(msg);
+  }
+
+  console.log("[OCR] Response status:", response.status);
+  const payload = await response.json().catch((err) => {
+    console.error("[OCR] JSON parse error:", err);
+    return {};
+  });
+  console.log("[OCR] Response body:", JSON.stringify(payload).slice(0, 500));
+
+  if (!response.ok) {
+    const message = payload?.ocrError || payload?.detail || `OCR request failed (${response.status})`;
+    console.error("[OCR] Backend error:", message);
+    throw new Error(message);
+  }
+  return payload;
+}
 }
 
 async function requestBackendManualSwatchOcr(file) {
@@ -5583,9 +5606,11 @@ async function extractPaletteFromUploadedImage(file) {
         setExtractionStatus(`${backendLabel} 找到了色块，但文字没识别准。请直接在右侧列表里逐个修正。`, true);
         setPaletteReviewStatus("当前没有识别出可用色号。请点右侧列表中的色块，再手动填写或重识别。", true);
         return;
-      } catch (error) {
-        console.warn("Backend OCR unavailable, fallback to local review:", error);
-      }
+      } catch (error) {
+        console.error("[OCR] FAILED:", error);
+        const errMsg = error?.message || String(error);
+        setExtractionStatus("后端 OCR 失败: " + errMsg + "。已回退到本地识别。按 F12 打开控制台看详细日志。", true);
+      }
     }
 
     const detections = analyzePaletteCardCanvas(canvas);
