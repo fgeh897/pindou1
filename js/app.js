@@ -6994,6 +6994,8 @@ function bindEvents() {
     );
   });
   extractLegendBtn?.addEventListener("click", extractPaletteFromLegendArea);
+  // localOcrBtn is injected dynamically, use document delegation
+  document.addEventListener("click", (e) => { if (e.target?.id === "localOcrBtn") extractPaletteWithLocalOcr(); });
   uploadPaletteImageBtn?.addEventListener("click", () => paletteImageInput?.click());
   paletteImageInput?.addEventListener("change", (event) => {
     extractPaletteFromUploadedImage(event.target.files?.[0]);
