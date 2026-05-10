@@ -4,270 +4,291 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>拼豆图纸智能辅助解析与导览系统</title>
-    <link rel="stylesheet" href="./styles.css?v=20260510d" />
+    <link rel="stylesheet" href="./styles.css?v=20260510e" />
   </head>
   <body>
     <div class="app-shell">
+
+      <!-- ========== Header ========== -->
       <header class="hero">
         <p class="eyebrow">Perler Beads Assistant</p>
         <h1>拼豆图纸智能辅助解析与导览系统</h1>
       </header>
 
+      <!-- ========== Tab Bar ========== -->
       <nav class="tab-bar">
         <button class="tab-btn active" data-tab="tab-library">
-          <span class="tab-num">库</span> 我的拼豆库
+          <span class="tab-icon">📚</span> 图纸库
           <span class="tab-badge" id="tabLibraryBadge">0张</span>
         </button>
         <button class="tab-btn" data-tab="tab-step1">
-          <span class="tab-num">1</span> 导入与裁剪
+          <span class="tab-icon">①</span> 导入裁剪
         </button>
         <button class="tab-btn" data-tab="tab-step2">
-          <span class="tab-num">2</span> 色卡管理
+          <span class="tab-icon">②</span> 色卡管理
           <span class="tab-badge" id="tabPaletteBadge">0色</span>
         </button>
         <button class="tab-btn" data-tab="tab-step3">
-          <span class="tab-num">3</span> 解析统计
+          <span class="tab-icon">③</span> 解析统计
         </button>
         <button class="tab-btn" data-tab="tab-step4" disabled>
-          <span class="tab-num">4</span> 5x5 导览
+          <span class="tab-icon">④</span> 5×5 导览
         </button>
       </nav>
 
-      <main class="layout">
-        <section class="panel tab-panel active" id="tab-library">
+      <!-- ========== Tab: 图纸库 ========== -->
+      <section class="tab-panel active" id="tab-library">
+        <div class="panel">
           <div class="panel-head">
-            <h2>我的拼豆库</h2>
+            <h2>我的图纸库</h2>
             <span class="status-pill muted" id="libraryStatus">0 张图纸</span>
           </div>
 
-          <div class="field-grid">
-            <label class="field">
-              <span>当前图纸名称</span>
-              <input id="libraryProjectNameInput" type="text" placeholder="例如 草莓餐垫" />
-            </label>
-            <label class="field">
-              <span>当前状态</span>
-              <select id="libraryProjectStatusSelect">
-                <option value="todo">未拼</option>
-                <option value="doing">拼到一半</option>
-                <option value="done">已拼好</option>
-              </select>
-            </label>
-            <div class="field">
-              <span>说明</span>
-              <p class="empty-text">你可以导入多张图纸，把每一张单独保存进拼豆库，之后随时回来继续裁剪、校色和查看 5x5 导览。</p>
+          <div class="panel-body">
+            <!-- Quick info -->
+            <p class="hint-text">每张图纸保存裁剪、色卡、解析结果和填涂进度。可随时切换、导入导出。</p>
+
+            <!-- Action bar -->
+            <div class="action-bar">
+              <div class="action-group">
+                <button id="saveProjectBtn" class="primary-btn">保存当前图纸</button>
+                <button id="importProjectBtn" class="secondary-btn">导入图纸</button>
+                <input id="libraryImageInput" type="file" accept="image/*" multiple hidden />
+              </div>
+              <div class="action-group" style="margin-left:auto;">
+                <label class="field-inline">
+                  <span>名称</span>
+                  <input id="libraryProjectNameInput" type="text" placeholder="输入图纸名称" />
+                </label>
+                <label class="field-inline">
+                  <span>状态</span>
+                  <select id="libraryProjectStatusSelect">
+                    <option value="todo">未拼</option>
+                    <option value="doing">拼到一半</option>
+                    <option value="done">已拼好</option>
+                  </select>
+                </label>
+              </div>
             </div>
+
+            <!-- Project grid -->
+            <div id="libraryProjectList" class="library-grid"></div>
           </div>
+        </div>
+      </section>
 
-          <div class="button-row" style="margin-top:12px;">
-            <button id="saveProjectBtn" type="button">保存当前图纸到拼豆库</button>
-            <button id="importProjectBtn" class="ghost-btn" type="button">导入图纸到拼豆库</button>
-            <input id="libraryImageInput" type="file" accept="image/*" multiple style="display:none;" />
-          </div>
-
-          <div id="libraryProjectList" class="library-grid" style="margin-top:14px;"></div>
-        </section>
-
-        <section class="panel tab-panel" id="tab-step1">
+      <!-- ========== Tab: 导入与裁剪 ========== -->
+      <section class="tab-panel" id="tab-step1">
+        <div class="panel">
           <div class="panel-head">
-            <h2>图像导入与网格裁剪</h2>
+            <h2>导入与网格裁剪</h2>
             <span class="status-pill" id="imageStatus">未加载图片</span>
           </div>
 
-          <div class="field-grid">
-            <label class="field field-upload">
-              <span>上传图纸</span>
-              <input id="imageInput" type="file" accept="image/*" />
-            </label>
-            <label class="field">
-              <span>网格宽度</span>
-              <input id="gridWidthInput" type="number" min="1" value="40" inputmode="numeric" />
-            </label>
-            <label class="field">
-              <span>网格高度</span>
-              <input id="gridHeightInput" type="number" min="1" value="40" inputmode="numeric" />
-            </label>
-          </div>
-
-          <div class="button-row" style="margin-top:12px;">
-            <label for="imageInput" class="file-pick-label">直接打开系统选图</label>
-            <button id="imagePickBtn" type="button">从相册选择图片</button>
-            <span class="empty-text" id="imagePickHint">平板上优先点这里，直接调用系统图片选择器。</span>
-          </div>
-
-          <div class="canvas-card">
-            <div class="canvas-meta">
-              <p>拖拽裁剪框选出纯网格区域，然后点击“确认裁剪”。支持手机、平板和电脑操作。</p>
-              <div class="btn-group">
-                <button id="applyCropBtn" type="button">确认裁剪</button>
-                <button id="resetCropBtn" class="ghost-btn" type="button">重置</button>
+          <div class="panel-body">
+            <!-- Upload & grid settings -->
+            <div class="action-bar">
+              <div class="action-group">
+                <label for="imageInput" class="primary-btn file-btn">打开系统选图</label>
+                <input id="imageInput" type="file" accept="image/*" hidden />
+                <button id="imagePickBtn" class="secondary-btn">相册选择</button>
+              </div>
+              <div class="action-group">
+                <label class="field-inline">
+                  <span>网格宽</span>
+                  <input id="gridWidthInput" type="number" min="1" value="40" inputmode="numeric" style="width:70px;" />
+                </label>
+                <label class="field-inline">
+                  <span>网格高</span>
+                  <input id="gridHeightInput" type="number" min="1" value="40" inputmode="numeric" style="width:70px;" />
+                </label>
               </div>
             </div>
-            <canvas id="cropCanvas" aria-label="图纸裁剪画布"></canvas>
-          </div>
 
-          <div class="meta-grid">
-            <div class="meta-box"><span>原图尺寸</span><strong id="imageSizeText">-</strong></div>
-            <div class="meta-box"><span>裁剪区域</span><strong id="cropInfoText">-</strong></div>
-            <div class="meta-box"><span>单格尺寸</span><strong id="cellSizeText">-</strong></div>
-          </div>
-        </section>
+            <!-- Preview area -->
+            <div class="preview-card">
+              <div class="preview-card-toolbar">
+                <p>拖拽裁剪框选出纯网格区域，然后确认裁剪。支持触屏和鼠标操作。</p>
+                <div class="btn-row">
+                  <button id="applyCropBtn" class="primary-btn small">确认裁剪</button>
+                  <button id="resetCropBtn" class="secondary-btn small">重置</button>
+                </div>
+              </div>
+              <canvas id="cropCanvas" aria-label="图纸裁剪画布"></canvas>
+            </div>
 
-        <section class="panel tab-panel" id="tab-step2">
+            <!-- Info bar -->
+            <div class="info-bar">
+              <div class="info-item"><span>原图尺寸</span><strong id="imageSizeText">-</strong></div>
+              <div class="info-item"><span>裁剪区域</span><strong id="cropInfoText">-</strong></div>
+              <div class="info-item"><span>单格尺寸</span><strong id="cellSizeText">-</strong></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ========== Tab: 色卡管理 ========== -->
+      <section class="tab-panel" id="tab-step2">
+        <div class="panel">
           <div class="panel-head">
-            <h2>色卡录入与颜色拾取</h2>
+            <h2>色卡录入与管理</h2>
             <span class="status-pill muted" id="paletteStatus">0 个色号</span>
           </div>
 
-          <div class="field-grid palette-grid">
-            <label class="field">
-              <span>色号</span>
-              <input id="paletteCodeInput" type="text" maxlength="12" placeholder="例如 H07" />
-            </label>
-            <label class="field">
-              <span>颜色</span>
-              <input id="paletteColorInput" type="color" value="#577799" />
-            </label>
-            <label class="field">
-              <span>RGB</span>
-              <input id="paletteRgbInput" type="text" placeholder="87,119,153" />
-            </label>
-          </div>
+          <div class="panel-body">
+            <!-- Manual add -->
+            <div class="action-bar">
+              <div class="action-group">
+                <label class="field-inline">
+                  <span>色号</span>
+                  <input id="paletteCodeInput" type="text" maxlength="12" placeholder="例如 H07" style="width:100px;" />
+                </label>
+                <label class="field-inline">
+                  <span>颜色</span>
+                  <input id="paletteColorInput" type="color" value="#577799" />
+                </label>
+                <label class="field-inline">
+                  <span>RGB</span>
+                  <input id="paletteRgbInput" type="text" placeholder="87,119,153" style="width:110px;" />
+                </label>
+              </div>
+              <div class="action-group">
+                <button id="addPaletteBtn" class="primary-btn small">加入色卡</button>
+                <button id="pickColorBtn" class="secondary-btn small">从图上取色</button>
+              </div>
+            </div>
 
-          <div class="button-row">
-            <button id="pickColorBtn" class="ghost-btn" type="button">从图片取色</button>
-            <button id="addPaletteBtn" type="button">加入色卡</button>
+            <!-- Palette list toggle -->
+            <div class="section-divider">
+              <button id="togglePaletteBtn" class="secondary-btn small">
+                <span id="togglePaletteIcon">▼</span> 展开色卡列表
+              </button>
+              <input id="paletteSearchInput" type="text" class="search-input" placeholder="搜索色号..." style="display:none;" />
+            </div>
+            <div id="paletteList" class="palette-list" style="display:none;"></div>
           </div>
+        </div>
+      </section>
 
-          <div class="palette-collapse-bar">
-            <button id="togglePaletteBtn" class="ghost-btn" type="button">
-              <span id="togglePaletteIcon">▼</span> 展开色卡列表
-            </button>
-            <input id="paletteSearchInput" type="text" class="palette-search" placeholder="搜索色号..." style="display:none;" />
-          </div>
-          <div id="paletteList" class="palette-list" style="display:none;"></div>
-        </section>
-
-        <section class="panel tab-panel" id="tab-step3">
+      <!-- ========== Tab: 解析统计 ========== -->
+      <section class="tab-panel" id="tab-step3">
+        <div class="panel">
           <div class="panel-head">
             <h2>解析与统计</h2>
             <span class="status-pill muted" id="parseStatus">等待解析</span>
           </div>
 
-          <div class="button-row">
-            <button id="analyzeBtn" type="button">解析整张网格</button>
-            <button id="downloadJsonBtn" class="ghost-btn" type="button">导出 JSON</button>
+          <div class="panel-body">
+            <div class="action-bar">
+              <button id="analyzeBtn" class="primary-btn">解析整张网格</button>
+              <button id="downloadJsonBtn" class="secondary-btn">导出 JSON</button>
+            </div>
+            <div id="analysisSummary" class="summary-card empty">
+              解析完成后，这里会显示整图概览和统计信息。
+            </div>
           </div>
+        </div>
+      </section>
 
-          <div id="analysisSummary" class="summary-card empty">
-            解析完成后，这里会显示整图概览、当前区块信息和智能建议。
-          </div>
-        </section>
-
-        <section class="panel tab-panel" id="tab-step4">
+      <!-- ========== Tab: 5x5 导览 ========== -->
+      <section class="tab-panel" id="tab-step4">
+        <div class="panel">
           <div class="panel-head">
-            <h2>5x5 导览与智能拼搭建议</h2>
+            <h2>5×5 区块导览</h2>
             <div class="panel-head-right">
-              <label class="strategy-switch">
-                <span>策略</span>
+              <label class="field-inline">
+                <span>导览策略</span>
                 <select id="strategySelect">
-                  <option value="color-fill">策略 A：按颜色填涂</option>
-                  <option value="edge-first">策略 B：从边缘到中心</option>
+                  <option value="color-fill">按颜色填涂</option>
+                  <option value="edge-first">从边缘到中心</option>
                 </select>
               </label>
             </div>
           </div>
 
-          <div class="viewer-toolbar">
-            <div class="chunk-pad">
-              <button id="moveUpBtn" class="ghost-btn" type="button">上</button>
-              <div class="chunk-pad-row">
-                <button id="moveLeftBtn" class="ghost-btn" type="button">左</button>
-                <button id="moveRightBtn" class="ghost-btn" type="button">右</button>
+          <div class="panel-body">
+            <!-- Navigator -->
+            <div class="viewer-nav">
+              <div class="chunk-pad">
+                <button id="moveUpBtn" class="nav-btn">▲</button>
+                <div class="chunk-pad-row">
+                  <button id="moveLeftBtn" class="nav-btn">◀</button>
+                  <button id="moveRightBtn" class="nav-btn">▶</button>
+                </div>
+                <button id="moveDownBtn" class="nav-btn">▼</button>
               </div>
-              <button id="moveDownBtn" class="ghost-btn" type="button">下</button>
+              <div class="chunk-info">
+                <strong id="chunkLabel">-</strong>
+                <span id="chunkCoordLabel">-</span>
+              </div>
+              <div class="btn-row">
+                <button id="prevChunkBtn" class="secondary-btn small">上一块</button>
+                <button id="nextChunkBtn" class="secondary-btn small">下一块</button>
+              </div>
             </div>
-            <div class="viewer-status">
-              <strong id="chunkLabel">-</strong>
-              <span id="chunkCoordLabel">-</span>
-            </div>
-            <div class="button-row">
-              <button id="prevChunkBtn" class="ghost-btn" type="button">上一个</button>
-              <button id="nextChunkBtn" class="ghost-btn" type="button">下一个</button>
-            </div>
-          </div>
 
-          <div class="summary-card" style="margin-bottom:12px;">
-            <h3>整体大图模式</h3>
-            <div class="field-grid" style="margin-top:12px;">
-              <label class="field">
-                <span>颜色筛选</span>
+            <!-- Color filter -->
+            <div class="section-card">
+              <h3>颜色筛选</h3>
+              <div class="action-bar compact">
                 <select id="focusColorSelect">
                   <option value="">显示全部颜色</option>
                 </select>
-              </label>
-              <div class="field">
-                <span>快速操作</span>
-                <div class="button-row">
-                  <button id="focusTopColorBtn" class="ghost-btn" type="button">最多颜色</button>
-                  <button id="clearFocusColorBtn" class="ghost-btn" type="button">清除筛选</button>
-                </div>
+                <button id="focusTopColorBtn" class="secondary-btn small">最多颜色</button>
+                <button id="clearFocusColorBtn" class="secondary-btn small">清除筛选</button>
               </div>
-              <div class="field">
-                <span>说明</span>
-                <p class="empty-text" id="focusColorSummary">可筛选某一个颜色，只看它在全图和当前 5x5 里的位置。</p>
+              <p class="hint-text" id="focusColorSummary">筛选某个颜色，只看它在全图和当前 5×5 的位置。</p>
+              <div class="preview-card">
+                <canvas id="overviewCanvas" aria-label="整体大图模式画布"></canvas>
+                <p class="canvas-hint">点击大图可跳转到对应 5×5 区块。筛选后其他颜色会被压暗。</p>
               </div>
             </div>
-            <div class="viewer-card" style="margin-top:12px;">
-              <canvas id="overviewCanvas" aria-label="整体大图模式画布"></canvas>
-              <p class="viewer-tip">点击整体大图可跳转到对应 5x5 区块。筛选颜色后，其它颜色会被压暗。</p>
-            </div>
-          </div>
 
-          <div class="viewer-layout">
-            <div class="minimap-card">
-              <canvas id="minimapCanvas" aria-label="全局缩略图"></canvas>
-              <p class="minimap-tip">红框 = 当前区块</p>
+            <!-- Viewer -->
+            <div class="viewer-layout">
+              <div class="minimap-card">
+                <canvas id="minimapCanvas" aria-label="全局缩略图"></canvas>
+                <p class="canvas-hint center">红框 = 当前区块</p>
+              </div>
+              <div class="preview-card">
+                <canvas id="viewerCanvas" aria-label="5x5 区块导览画布"></canvas>
+              </div>
             </div>
-            <div class="viewer-card">
-              <canvas id="viewerCanvas" aria-label="5x5 区块导览画布"></canvas>
+            <p class="canvas-hint">点击缩略图跳转区块，彩色描边 = 智能建议重点格子。</p>
+
+            <!-- Stats -->
+            <div class="stats-grid">
+              <div class="stats-card">
+                <h3>当前 5×5 用量</h3>
+                <div id="localStats"></div>
+              </div>
+              <div class="stats-card">
+                <h3>智能建议</h3>
+                <div id="planPanel"></div>
+              </div>
             </div>
-          </div>
-          <p class="viewer-tip">点击缩略图可跳转区块，彩色描边 = 当前智能建议重点格子。</p>
 
-          <div class="stats-grid">
-            <section class="stats-card">
-              <h3>当前 5x5 用量</h3>
-              <div id="localStats"></div>
-            </section>
-            <section class="stats-card">
-              <h3>智能建议</h3>
-              <div id="planPanel"></div>
-            </section>
+            <details class="global-stats">
+              <summary>查看全局颜色统计</summary>
+              <div id="globalStats"></div>
+            </details>
           </div>
+        </div>
+      </section>
 
-          <details class="global-stats">
-            <summary>查看全局颜色统计</summary>
-            <div id="globalStats"></div>
-          </details>
-        </section>
-      </main>
-    </div>
+    </div><!-- .app-shell -->
 
     <script>
       (function () {
-        const host = window.location.hostname || "";
-        const isLocalHost = host === "localhost" || host === "127.0.0.1" || host === "::1";
-        const isLanHost =
-          /^10\./.test(host) ||
-          /^192\.168\./.test(host) ||
-          /^172\.(1[6-9]|2\d|3[01])\./.test(host);
-        if (isLocalHost || isLanHost) {
+        var host = window.location.hostname || "";
+        var isLocal = host === "localhost" || host === "127.0.0.1" || host === "::1";
+        var isLan = /^10\./.test(host) || /^192\.168\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host);
+        if (isLocal || isLan) {
           window.__PIN_DOU_CLOUD_STATE_URL__ = "https://pindou-rho.vercel.app/api/state";
         }
       })();
     </script>
     <script src="./js/palette-data.js?v=20260508c"></script>
-    <script type="module" src="./js/app.js?v=20260510g"></script>
+    <script type="module" src="./js/app.js?v=20260510f"></script>
   </body>
 </html>
