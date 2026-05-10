@@ -153,6 +153,28 @@ let paletteReviewGridGesture = null;
 let sampleInspectHitRegions = [];
 let sampleInspectOverlay = null;
 let sampleInspectGesture = null;
+let persistStateTimer = null;
+let persistStateRequestSeq = 0;
+let persistStateSavedSeq = 0;
+let libraryDataExportBtn = null;
+let libraryDataImportBtn = null;
+let libraryDataImportInput = null;
+let libraryDataStatus = null;
+let batchReplaceModeInput = null;
+let batchReplaceCodeInput = null;
+let batchReplaceCodeList = null;
+let batchReplaceApplyBtn = null;
+let batchReplaceClearSelectionBtn = null;
+let batchReplaceClearOverridesBtn = null;
+let batchReplaceStatus = null;
+let viewerSelectionGesture = null;
+let overviewSelectionGesture = null;
+
+const analysisBatchSelection = {
+  targetCode: "",
+  selectedKeys: new Set(),
+  dragRect: null,
+};
 
 let paletteReviewState = {
   sourceCanvas: null,
@@ -164,13 +186,16 @@ let paletteReviewState = {
   manualRgb: null,
   manualPoint: null,
   detailDisplay: null,
+  detailPixels: [],
   grid: null,
 };
 
 const STORAGE_KEY = "pindou-assistant-state-v1";
-const BACKEND_PALETTE_OCR_URL = "/api/ocr/palette-card";
-const BACKEND_MANUAL_SWATCH_OCR_URL = "/api/ocr/manual-swatch";
-const BACKEND_PALETTE_GRID_OCR_URL = "/api/ocr/palette-grid";
+const SERVER_STATE_URL = window.__PIN_DOU_CLOUD_STATE_URL__ || "/api/state";
+const OCR_API_BASE_URL = (window.__PIN_DOU_OCR_API_BASE_URL__ || "").replace(/\/$/, "");
+const BACKEND_PALETTE_OCR_URL = `${OCR_API_BASE_URL}/api/ocr/palette-card`;
+const BACKEND_MANUAL_SWATCH_OCR_URL = `${OCR_API_BASE_URL}/api/ocr/manual-swatch`;
+const BACKEND_PALETTE_GRID_OCR_URL = `${OCR_API_BASE_URL}/api/ocr/palette-grid`;
 const PROJECT_STATUS_LABELS = {
   todo: "未拼",
   doing: "拼到一半",
@@ -319,6 +344,12 @@ function openImagePicker() {
     return;
   }
 
+  try {
+    imageInput.value = "";
+  } catch (error) {
+    console.warn("reset image input value failed:", error);
+  }
+
   setImagePickHint("已请求系统图片选择器...");
 
   try {
@@ -419,12 +450,32 @@ function createStoredImageRecord(dataUrl, image, name = "") {
   };
 }
 
-async function loadImageFromDataUrl(dataUrl) {
+async function loadImageElement(source) {
   const image = new Image();
   image.decoding = "async";
-  image.src = dataUrl;
-  await image.decode();
+
+  const loadPromise = new Promise((resolve, reject) => {
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("图片文件无法读取或格式不受支持"));
+  });
+
+  image.src = source;
+
+  if (typeof image.decode === "function") {
+    try {
+      await image.decode();
+      return image;
+    } catch (error) {
+      console.warn("image.decode failed, fallback to onload:", error);
+    }
+  }
+
+  await loadPromise;
   return image;
+}
+
+async function loadImageFromDataUrl(dataUrl) {
+  return loadImageElement(dataUrl);
 }
 
 function buildProjectSnapshot(state) {
@@ -456,9 +507,33 @@ function buildProjectSnapshot(state) {
 }
 
 function buildPersistedState(state) {
+  const meta = getCurrentProjectMeta(state);
+  const existingProjects = state.libraryProjects || [];
+  const nextLibraryProjects =
+    meta.id && state.storedImage?.dataUrl
+      ? [
+          createProjectRecordFromSnapshot(
+            buildProjectSnapshot({
+              ...state,
+              currentProjectName: meta.name,
+              currentProjectStatus: meta.status,
+            }),
+            {
+              id: meta.id,
+              name: meta.name,
+              status: meta.status,
+              createdAt: existingProjects.find((project) => project.id === meta.id)?.createdAt,
+              coverImageDataUrl:
+                state.storedImage?.dataUrl || existingProjects.find((project) => project.id === meta.id)?.coverImageDataUrl || "",
+            },
+          ),
+          ...existingProjects.filter((project) => project.id !== meta.id),
+        ]
+      : existingProjects;
+
   return {
     ...buildProjectSnapshot(state),
-    libraryProjects: state.libraryProjects || [],
+    libraryProjects: nextLibraryProjects,
     currentProjectId: state.currentProjectId || "",
   };
 }
@@ -501,6 +576,7 @@ function buildPaletteReviewSnapshot() {
     activeIndex: paletteReviewState.activeIndex,
     manualRgb: paletteReviewState.manualRgb || null,
     manualPoint: paletteReviewState.manualPoint || null,
+    detailPixels: paletteReviewState.detailPixels || [],
     grid: paletteReviewState.grid || null,
   };
 }
@@ -516,6 +592,7 @@ function resetPaletteReviewState() {
     manualRgb: null,
     manualPoint: null,
     detailDisplay: null,
+    detailPixels: [],
     grid: null,
   };
 }
@@ -615,6 +692,7 @@ async function buildHydratedStateFromSnapshot(snapshot, extras = {}) {
         manualRgb: snapshot.paletteReviewSnapshot.manualRgb || null,
         manualPoint: snapshot.paletteReviewSnapshot.manualPoint || null,
         detailDisplay: null,
+        detailPixels: snapshot.paletteReviewSnapshot.detailPixels || [],
         grid:
           snapshot.paletteReviewSnapshot.grid ||
           createDefaultPaletteReviewGrid(sourceCanvas, snapshot.paletteReviewSnapshot.detections || []),
@@ -635,16 +713,71 @@ function saveStateToStorage() {
   } catch (error) {
     console.warn("Failed to persist local state:", error);
   }
+
+  scheduleServerStatePersist(payload);
+}
+
+function scheduleServerStatePersist(payload = buildPersistedState(getState())) {
+  if (typeof window.fetch !== "function") {
+    return;
+  }
+
+  const requestSeq = ++persistStateRequestSeq;
+  if (persistStateTimer) {
+    window.clearTimeout(persistStateTimer);
+  }
+
+  persistStateTimer = window.setTimeout(async () => {
+    try {
+      await fetch(SERVER_STATE_URL, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+      persistStateSavedSeq = Math.max(persistStateSavedSeq, requestSeq);
+    } catch (error) {
+      console.warn("Failed to persist server state:", error);
+    }
+  }, 420);
+}
+
+async function loadPersistedPayload() {
+  if (typeof window.fetch === "function") {
+    try {
+      const response = await fetch(SERVER_STATE_URL, { cache: "no-store" });
+      if (response.ok) {
+        const payload = await response.json();
+        if (payload?.state && typeof payload.state === "object") {
+          return payload.state;
+        }
+      }
+    } catch (error) {
+      console.warn("Failed to load server state, fallback to localStorage:", error);
+    }
+  }
+
+  const raw = window.localStorage.getItem(STORAGE_KEY);
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(raw);
+  } catch (error) {
+    console.warn("Failed to parse local state:", error);
+    return null;
+  }
 }
 
 async function restoreStateFromStorage() {
-  const raw = window.localStorage.getItem(STORAGE_KEY);
-  if (!raw) {
+  const parsed = await loadPersistedPayload();
+  if (!parsed) {
     return;
   }
 
   try {
-    const parsed = JSON.parse(raw);
     const nextState = await buildHydratedStateFromSnapshot(parsed, {
       libraryProjects: parsed.libraryProjects || [],
       currentProjectId: parsed.currentProjectId || "",
@@ -1078,8 +1211,8 @@ function samplePaletteSwatchRgb(sourceCanvas, box) {
     const centerY = Math.round(y);
     for (let offsetY = -patchRadius; offsetY <= patchRadius; offsetY += 1) {
       for (let offsetX = -patchRadius; offsetX <= patchRadius; offsetX += 1) {
-        const safeX = clamp(centerX + offsetX, 0, sourceCanvas.width - 1);
-        const safeY = clamp(centerY + offsetY, 0, sourceCanvas.height - 1);
+        const safeX = clampNumber(centerX + offsetX, 0, sourceCanvas.width - 1);
+        const safeY = clampNumber(centerY + offsetY, 0, sourceCanvas.height - 1);
         const data = ctx.getImageData(safeX, safeY, 1, 1).data;
         pixels.push([data[0], data[1], data[2]]);
       }
@@ -1170,13 +1303,21 @@ function sampleMedianRgbFromCanvasPoint(sourceCanvas, x, y, radius = 2) {
   const py = Math.round(y);
   for (let offsetY = -radius; offsetY <= radius; offsetY += 1) {
     for (let offsetX = -radius; offsetX <= radius; offsetX += 1) {
-      const safeX = clamp(px + offsetX, 0, sourceCanvas.width - 1);
-      const safeY = clamp(py + offsetY, 0, sourceCanvas.height - 1);
+      const safeX = clampNumber(px + offsetX, 0, sourceCanvas.width - 1);
+      const safeY = clampNumber(py + offsetY, 0, sourceCanvas.height - 1);
       const data = ctx.getImageData(safeX, safeY, 1, 1).data;
       pixels.push([data[0], data[1], data[2]]);
     }
   }
   return medianRgbList(pixels);
+}
+
+function sampleExactRgbFromCanvasPoint(sourceCanvas, x, y) {
+  const ctx = sourceCanvas.getContext("2d", { willReadFrequently: true });
+  const px = clampNumber(Math.round(x), 0, sourceCanvas.width - 1);
+  const py = clampNumber(Math.round(y), 0, sourceCanvas.height - 1);
+  const data = ctx.getImageData(px, py, 1, 1).data;
+  return [data[0], data[1], data[2]];
 }
 
 function samplePixelGridFromCanvasPoint(sourceCanvas, x, y, radius = 2) {
@@ -1186,8 +1327,8 @@ function samplePixelGridFromCanvasPoint(sourceCanvas, x, y, radius = 2) {
   const py = Math.round(y);
   for (let offsetY = -radius; offsetY <= radius; offsetY += 1) {
     for (let offsetX = -radius; offsetX <= radius; offsetX += 1) {
-      const safeX = clamp(px + offsetX, 0, sourceCanvas.width - 1);
-      const safeY = clamp(py + offsetY, 0, sourceCanvas.height - 1);
+      const safeX = clampNumber(px + offsetX, 0, sourceCanvas.width - 1);
+      const safeY = clampNumber(py + offsetY, 0, sourceCanvas.height - 1);
       const data = ctx.getImageData(safeX, safeY, 1, 1).data;
       pixels.push({
         x: safeX,
@@ -1259,6 +1400,7 @@ function setPaletteReviewData(sourceCanvas, sourceName, detections, options = {}
     manualRgb: null,
     manualPoint: null,
     detailDisplay: null,
+    detailPixels: [],
     grid: {
       ...nextGrid,
       rect: nextGrid?.rect ? { ...nextGrid.rect } : null,
@@ -1392,6 +1534,19 @@ function getPaletteGridCellBoxes(grid) {
     }
   }
   return boxes;
+}
+
+function getCurrentPaletteReviewSelectionBox() {
+  const activeItem =
+    paletteReviewState.activeIndex >= 0 ? paletteReviewState.detections[paletteReviewState.activeIndex] : null;
+  return activeItem?.box || paletteReviewState.selection || null;
+}
+
+function getRectCenter(rect) {
+  return {
+    x: rect.x + rect.width / 2,
+    y: rect.y + rect.height / 2,
+  };
 }
 
 function shrinkPaletteGridCellBox(cellBox, grid) {
@@ -1556,6 +1711,37 @@ function renderPaletteReview() {
         item.sampleBox.height * display.scale,
       );
       paletteReviewCtx.setLineDash([]);
+
+      const autoPointX = (item.sampleBox.x + item.sampleBox.width / 2) * display.scale;
+      const autoPointY = (item.sampleBox.y + item.sampleBox.height / 2) * display.scale;
+      paletteReviewCtx.save();
+      paletteReviewCtx.fillStyle = "rgba(44, 196, 198, 0.96)";
+      paletteReviewCtx.strokeStyle = "rgba(255,255,255,0.92)";
+      paletteReviewCtx.lineWidth = 1.4;
+      paletteReviewCtx.beginPath();
+      paletteReviewCtx.arc(autoPointX, autoPointY, isActive ? 4.2 : 3.2, 0, Math.PI * 2);
+      paletteReviewCtx.fill();
+      paletteReviewCtx.stroke();
+      paletteReviewCtx.restore();
+    }
+
+    if (item.manualPoint) {
+      const manualPointX = item.manualPoint.x * display.scale;
+      const manualPointY = item.manualPoint.y * display.scale;
+      paletteReviewCtx.save();
+      paletteReviewCtx.strokeStyle = "#9d5333";
+      paletteReviewCtx.lineWidth = 2;
+      paletteReviewCtx.beginPath();
+      paletteReviewCtx.moveTo(manualPointX - 6, manualPointY);
+      paletteReviewCtx.lineTo(manualPointX + 6, manualPointY);
+      paletteReviewCtx.moveTo(manualPointX, manualPointY - 6);
+      paletteReviewCtx.lineTo(manualPointX, manualPointY + 6);
+      paletteReviewCtx.stroke();
+      paletteReviewCtx.fillStyle = "#9d5333";
+      paletteReviewCtx.beginPath();
+      paletteReviewCtx.arc(manualPointX, manualPointY, 3.2, 0, Math.PI * 2);
+      paletteReviewCtx.fill();
+      paletteReviewCtx.restore();
     }
   }
 
@@ -1642,6 +1828,7 @@ function renderPaletteReviewDetail() {
     paletteReviewState.activeIndex >= 0 ? paletteReviewState.detections[paletteReviewState.activeIndex] : null;
   const selection = activeItem ? activeItem.box : paletteReviewState.selection;
   if (!paletteReviewState.sourceCanvas || !selection) {
+    paletteReviewState.detailPixels = [];
     paletteReviewDetailCtx.fillStyle = "#6f6257";
     paletteReviewDetailCtx.font = "600 13px 'Segoe UI'";
     paletteReviewDetailCtx.fillText("点击右侧结果，或在整图中框选一个色块。", 12, 28);
@@ -1678,10 +1865,16 @@ function renderPaletteReviewDetailV2() {
     return;
   }
 
-  ensureCanvasSize(paletteReviewDetailCanvas, 220, 120);
-  paletteReviewDetailCtx.clearRect(0, 0, 220, 120);
+  const canvasWidth = Math.max(
+    220,
+    Math.round(paletteReviewDetailCanvas.parentElement?.clientWidth || paletteReviewDetailCanvas.clientWidth || 220) - 4,
+  );
+  const canvasHeight = Math.max(132, Math.round(canvasWidth * 0.58));
+  ensureCanvasSize(paletteReviewDetailCanvas, canvasWidth, canvasHeight);
+  paletteReviewDetailCanvas.style.width = `${canvasWidth}px`;
+  paletteReviewDetailCtx.clearRect(0, 0, canvasWidth, canvasHeight);
   paletteReviewDetailCtx.fillStyle = "#fffdf8";
-  paletteReviewDetailCtx.fillRect(0, 0, 220, 120);
+  paletteReviewDetailCtx.fillRect(0, 0, canvasWidth, canvasHeight);
   paletteReviewState.detailDisplay = null;
 
   const activeItem =
@@ -1692,7 +1885,7 @@ function renderPaletteReviewDetailV2() {
     paletteReviewDetailCtx.font = "600 13px 'Segoe UI'";
     paletteReviewDetailCtx.fillText("点击左侧识别框，或重新拖一个手动框选区域。", 12, 28);
     if (paletteReviewColorValue) {
-      paletteReviewColorValue.textContent = "在右侧放大预览上点一下真实底色，保存时会优先使用你手选的颜色。";
+      paletteReviewColorValue.textContent = "直接在右侧放大预览上点真实像素，或点下面 5x5 像素板。保存时会优先使用你手选的颜色。";
     }
     if (paletteReviewPixelGrid) {
       paletteReviewPixelGrid.innerHTML = "";
@@ -1701,13 +1894,18 @@ function renderPaletteReviewDetailV2() {
   }
 
   const previewCanvas = createCanvasFromRegion(paletteReviewState.sourceCanvas, selection);
-  const scale = Math.min(196 / previewCanvas.width, 88 / previewCanvas.height);
+  const previewMaxWidth = Math.max(180, canvasWidth - 24);
+  const previewMaxHeight = Math.max(84, canvasHeight - 48);
+  const scale = Math.min(previewMaxWidth / previewCanvas.width, previewMaxHeight / previewCanvas.height);
   const drawWidth = previewCanvas.width * scale;
   const drawHeight = previewCanvas.height * scale;
-  const offsetX = (220 - drawWidth) / 2;
-  const offsetY = 10 + (88 - drawHeight) / 2;
+  const offsetX = (canvasWidth - drawWidth) / 2;
+  const offsetY = 10 + (previewMaxHeight - drawHeight) / 2;
+  const footerY = canvasHeight - 14;
   paletteReviewState.detailDisplay = {
     selection: { ...selection },
+    canvasWidth,
+    canvasHeight,
     offsetX,
     offsetY,
     drawWidth,
@@ -1729,31 +1927,51 @@ function renderPaletteReviewDetailV2() {
     paletteReviewDetailCtx.setLineDash([]);
   }
 
-  const autoPoint =
-    sampleBox
-      ? {
-          x: sampleBox.x + sampleBox.width / 2,
-          y: sampleBox.y + sampleBox.height / 2,
-        }
-      : {
-          x: selection.x + selection.width / 2,
-          y: selection.y + selection.height / 2,
-        };
-  const activePoint =
+  const previewPoint =
     paletteReviewState.manualPoint &&
     paletteReviewState.manualPoint.x >= selection.x &&
     paletteReviewState.manualPoint.x <= selection.x + selection.width &&
     paletteReviewState.manualPoint.y >= selection.y &&
     paletteReviewState.manualPoint.y <= selection.y + selection.height
       ? paletteReviewState.manualPoint
-      : autoPoint;
+      : sampleBox
+        ? {
+            x: sampleBox.x + sampleBox.width / 2,
+            y: sampleBox.y + sampleBox.height / 2,
+          }
+        : {
+            x: selection.x + selection.width / 2,
+            y: selection.y + selection.height / 2,
+          };
+  const manualPointInSelection =
+    paletteReviewState.manualPoint &&
+    paletteReviewState.manualPoint.x >= selection.x &&
+    paletteReviewState.manualPoint.x <= selection.x + selection.width &&
+    paletteReviewState.manualPoint.y >= selection.y &&
+    paletteReviewState.manualPoint.y <= selection.y + selection.height
+      ? paletteReviewState.manualPoint
+      : null;
+  const autoPointInSelection = previewPoint;
 
-  if (activePoint) {
-    const markerX = offsetX + ((activePoint.x - selection.x) / selection.width) * drawWidth;
-    const markerY = offsetY + ((activePoint.y - selection.y) / selection.height) * drawHeight;
-    const isManualMarker = activePoint === paletteReviewState.manualPoint;
+  if (autoPointInSelection) {
+    const autoPointX = offsetX + ((autoPointInSelection.x - selection.x) / selection.width) * drawWidth;
+    const autoPointY = offsetY + ((autoPointInSelection.y - selection.y) / selection.height) * drawHeight;
     paletteReviewDetailCtx.save();
-    paletteReviewDetailCtx.strokeStyle = isManualMarker ? "#9d5333" : "#2f6c73";
+    paletteReviewDetailCtx.fillStyle = manualPointInSelection ? "rgba(44, 196, 198, 0.65)" : "rgba(44, 196, 198, 0.96)";
+    paletteReviewDetailCtx.strokeStyle = "rgba(255,255,255,0.92)";
+    paletteReviewDetailCtx.lineWidth = 1.2;
+    paletteReviewDetailCtx.beginPath();
+    paletteReviewDetailCtx.arc(autoPointX, autoPointY, 4, 0, Math.PI * 2);
+    paletteReviewDetailCtx.fill();
+    paletteReviewDetailCtx.stroke();
+    paletteReviewDetailCtx.restore();
+  }
+
+  if (manualPointInSelection) {
+    const markerX = offsetX + ((manualPointInSelection.x - selection.x) / selection.width) * drawWidth;
+    const markerY = offsetY + ((manualPointInSelection.y - selection.y) / selection.height) * drawHeight;
+    paletteReviewDetailCtx.save();
+    paletteReviewDetailCtx.strokeStyle = "#9d5333";
     paletteReviewDetailCtx.lineWidth = 2;
     paletteReviewDetailCtx.beginPath();
     paletteReviewDetailCtx.moveTo(markerX - 7, markerY);
@@ -1761,7 +1979,7 @@ function renderPaletteReviewDetailV2() {
     paletteReviewDetailCtx.moveTo(markerX, markerY - 7);
     paletteReviewDetailCtx.lineTo(markerX, markerY + 7);
     paletteReviewDetailCtx.stroke();
-    paletteReviewDetailCtx.fillStyle = isManualMarker ? "#9d5333" : "#2f6c73";
+    paletteReviewDetailCtx.fillStyle = "#9d5333";
     paletteReviewDetailCtx.beginPath();
     paletteReviewDetailCtx.arc(markerX, markerY, 3.8, 0, Math.PI * 2);
     paletteReviewDetailCtx.fill();
@@ -1771,83 +1989,150 @@ function renderPaletteReviewDetailV2() {
     paletteReviewDetailCtx.restore();
   }
 
-  if (
-    paletteReviewState.manualPoint &&
-    paletteReviewState.manualPoint.x >= selection.x &&
-    paletteReviewState.manualPoint.x <= selection.x + selection.width &&
-    paletteReviewState.manualPoint.y >= selection.y &&
-    paletteReviewState.manualPoint.y <= selection.y + selection.height
-  ) {
+  if (manualPointInSelection) {
     paletteReviewDetailCtx.fillStyle = "#9d5333";
     paletteReviewDetailCtx.font = "600 10px 'Segoe UI'";
-    paletteReviewDetailCtx.fillText("手选点", 152, 108);
-  } else if (autoPoint) {
-    paletteReviewDetailCtx.fillStyle = "#2f6c73";
+    paletteReviewDetailCtx.fillText("手选点", Math.max(12, canvasWidth - 56), footerY);
+  } else if (autoPointInSelection) {
+    paletteReviewDetailCtx.fillStyle = "rgba(44, 196, 198, 0.96)";
     paletteReviewDetailCtx.font = "600 10px 'Segoe UI'";
-    paletteReviewDetailCtx.fillText("自动点", 152, 108);
+    paletteReviewDetailCtx.fillText("自动点", Math.max(12, canvasWidth - 56), footerY);
   }
 
   paletteReviewDetailCtx.fillStyle = "#302116";
   paletteReviewDetailCtx.font = "700 12px 'Segoe UI'";
   const label = activeItem?.code || paletteReviewCodeInput?.value?.trim().toUpperCase() || "待填写";
-  paletteReviewDetailCtx.fillText(`当前色号：${label}`, 12, 108);
+  paletteReviewDetailCtx.fillText(`当前色号：${label}`, 12, footerY);
 
   const effectiveRgb = paletteReviewState.manualRgb || activeItem?.manualRgb || activeItem?.rgb || null;
   if (paletteReviewColorValue) {
     paletteReviewColorValue.textContent = effectiveRgb
-      ? `当前取色：${formatRgb(effectiveRgb)}  ${rgbToHex(effectiveRgb)}${paletteReviewState.manualRgb ? "（手选点）" : "（自动主色点）"} · 落点 ${Math.round(activePoint?.x || 0)},${Math.round(activePoint?.y || 0)}`
-      : "在右侧放大预览上点一下真实底色，保存时会优先使用你手选的颜色。";
+      ? `当前取色：${formatRgb(effectiveRgb)}  ${rgbToHex(effectiveRgb)}${paletteReviewState.manualRgb ? `（手选点 ${Math.round(manualPointInSelection?.x || 0)},${Math.round(manualPointInSelection?.y || 0)}）` : "（自动主色）"}`
+      : "直接在右侧放大预览上点真实像素，或点下面 5x5 像素板。保存时会优先使用你手选的颜色。";
   }
 
   if (paletteReviewPixelGrid) {
-    const pixels = activePoint
-      ? samplePixelGridFromCanvasPoint(paletteReviewState.sourceCanvas, activePoint.x, activePoint.y, 2)
+    const pixels = previewPoint
+      ? samplePixelGridFromCanvasPoint(paletteReviewState.sourceCanvas, previewPoint.x, previewPoint.y, 2)
       : [];
+    paletteReviewState.detailPixels = pixels;
     paletteReviewPixelGrid.innerHTML = pixels.length
       ? `
-        <div class="palette-pixel-grid-label">${paletteReviewState.manualRgb ? "手选点" : "自动点"}周围 5x5 像素</div>
+        <div class="palette-pixel-grid-label">手动取色板 · 5x5 像素</div>
         <div class="palette-pixel-grid-cells">
           ${pixels
-            .map(
-              (item) =>
-                `<span class="palette-pixel-cell" title="${item.x},${item.y} ${formatRgb(item.rgb)}" style="background:${rgbToHex(item.rgb)}"></span>`,
+            .map((item, index) =>
+              `<button type="button" class="palette-pixel-cell${paletteReviewState.manualPoint && Math.round(paletteReviewState.manualPoint.x) === item.x && Math.round(paletteReviewState.manualPoint.y) === item.y ? " is-active" : ""}" data-palette-pixel-index="${index}" title="${item.x},${item.y} ${formatRgb(item.rgb)}" style="background:${rgbToHex(item.rgb)}"></button>`,
             )
             .join("")}
         </div>
+        <p class="empty-text" style="margin:0;">点任意小格，直接把那个真实像素设成手动取色点。</p>
       `
       : "";
+  } else {
+    paletteReviewState.detailPixels = [];
   }
 }
 
-function handlePaletteReviewDetailPointerDown(event) {
-  const detail = paletteReviewState.detailDisplay;
-  if (!detail || !paletteReviewState.sourceCanvas) {
-    return;
+function getDetailCanvasClientPoint(event) {
+  if (event?.touches?.length) {
+    return {
+      clientX: event.touches[0].clientX,
+      clientY: event.touches[0].clientY,
+    };
   }
-
-  const rect = paletteReviewDetailCanvas.getBoundingClientRect();
-  const localX = event.clientX - rect.left;
-  const localY = event.clientY - rect.top;
-  if (
-    localX < detail.offsetX ||
-    localX > detail.offsetX + detail.drawWidth ||
-    localY < detail.offsetY ||
-    localY > detail.offsetY + detail.drawHeight
-  ) {
-    return;
+  if (event?.changedTouches?.length) {
+    return {
+      clientX: event.changedTouches[0].clientX,
+      clientY: event.changedTouches[0].clientY,
+    };
   }
-
-  const ratioX = (localX - detail.offsetX) / detail.drawWidth;
-  const ratioY = (localY - detail.offsetY) / detail.drawHeight;
-  const sourceX = detail.selection.x + ratioX * detail.selection.width;
-  const sourceY = detail.selection.y + ratioY * detail.selection.height;
-  const rgb = sampleMedianRgbFromCanvasPoint(paletteReviewState.sourceCanvas, sourceX, sourceY, 2);
-  paletteReviewState.manualRgb = rgb;
-  paletteReviewState.manualPoint = {
-    x: sourceX,
-    y: sourceY,
+  return {
+    clientX: event.clientX,
+    clientY: event.clientY,
   };
-  setPaletteReviewStatus(`已手动选择真实颜色：${formatRgb(rgb)} ${rgbToHex(rgb)}。保存时会优先使用这次手选颜色。`);
+}
+
+function handlePaletteReviewDetailPointerDown(event) {
+  try {
+    const detail = paletteReviewState.detailDisplay;
+    if (!detail || !paletteReviewState.sourceCanvas) {
+      setPaletteReviewStatus("放大取色区还没准备好，请先在左侧选中一个色块。", true);
+      return;
+    }
+
+    event.preventDefault?.();
+    event.stopPropagation?.();
+
+    const clientPoint = getDetailCanvasClientPoint(event);
+    const rect = paletteReviewDetailCanvas.getBoundingClientRect();
+    const scaleX = rect.width > 0 ? detail.canvasWidth / rect.width : 1;
+    const scaleY = rect.height > 0 ? detail.canvasHeight / rect.height : 1;
+    const localX = (clientPoint.clientX - rect.left) * scaleX;
+    const localY = (clientPoint.clientY - rect.top) * scaleY;
+    setPaletteReviewStatus(`收到点击：画布 ${Math.round(localX)},${Math.round(localY)}。正在取色...`);
+    const clampedLocalX = clampNumber(localX, detail.offsetX, detail.offsetX + detail.drawWidth);
+    const clampedLocalY = clampNumber(localY, detail.offsetY, detail.offsetY + detail.drawHeight);
+    const snappedToImage = Math.abs(clampedLocalX - localX) > 0.5 || Math.abs(clampedLocalY - localY) > 0.5;
+    const ratioX = (clampedLocalX - detail.offsetX) / Math.max(1, detail.drawWidth);
+    const ratioY = (clampedLocalY - detail.offsetY) / Math.max(1, detail.drawHeight);
+    const sourceX = detail.selection.x + ratioX * detail.selection.width;
+    const sourceY = detail.selection.y + ratioY * detail.selection.height;
+    const rgb = sampleExactRgbFromCanvasPoint(paletteReviewState.sourceCanvas, sourceX, sourceY);
+    paletteReviewState.manualRgb = rgb;
+    paletteReviewState.manualPoint = {
+      x: Math.round(sourceX),
+      y: Math.round(sourceY),
+    };
+    if (paletteReviewState.activeIndex >= 0 && paletteReviewState.detections[paletteReviewState.activeIndex]) {
+      paletteReviewState.detections[paletteReviewState.activeIndex].manualRgb = [...rgb];
+      paletteReviewState.detections[paletteReviewState.activeIndex].manualPoint = {
+        x: Math.round(sourceX),
+        y: Math.round(sourceY),
+      };
+    }
+    if (paletteReviewColorValue) {
+      paletteReviewColorValue.textContent = `当前取色：${formatRgb(rgb)}  ${rgbToHex(rgb)}（手选点 ${Math.round(sourceX)},${Math.round(sourceY)}）`;
+    }
+    setPaletteReviewStatus(
+      `${snappedToImage ? "点击已吸附到最近图内像素：" : "已手动选择真实像素："}${Math.round(sourceX)},${Math.round(sourceY)} ${formatRgb(rgb)} ${rgbToHex(rgb)}。保存时会优先使用这次手选颜色。`,
+    );
+    saveStateToStorage();
+    renderPaletteReview();
+  } catch (error) {
+    setPaletteReviewStatus(`手动取色报错：${error?.message || error}`, true);
+    console.error("palette review detail pick failed", error);
+  }
+}
+
+function handlePaletteReviewDetailDelegated(event) {
+  const target = event.target;
+  if (!target || target.id !== "paletteReviewDetailCanvas") {
+    return;
+  }
+  handlePaletteReviewDetailPointerDown(event);
+}
+
+function applyManualPalettePixelSelection(index) {
+  const pixel = paletteReviewState.detailPixels?.[index];
+  if (!pixel) {
+    setPaletteReviewStatus("当前没有可用的像素取色点。请先选中一个色卡。", true);
+    return;
+  }
+
+  paletteReviewState.manualRgb = [...pixel.rgb];
+  paletteReviewState.manualPoint = {
+    x: pixel.x,
+    y: pixel.y,
+  };
+  if (paletteReviewState.activeIndex >= 0 && paletteReviewState.detections[paletteReviewState.activeIndex]) {
+    paletteReviewState.detections[paletteReviewState.activeIndex].manualRgb = [...pixel.rgb];
+    paletteReviewState.detections[paletteReviewState.activeIndex].manualPoint = {
+      x: pixel.x,
+      y: pixel.y,
+    };
+  }
+  setPaletteReviewStatus(`已手动选择真实颜色：${formatRgb(pixel.rgb)} ${rgbToHex(pixel.rgb)}。保存时会优先使用这次手选颜色。`);
   saveStateToStorage();
   renderPaletteReview();
 }
@@ -2077,6 +2362,31 @@ function getCellRectByIndex(state, cellX, cellY) {
   };
 }
 
+function getLocalSamplingScale(sampling = getState().sampling) {
+  return {
+    x: clampNumber(Number.isFinite(sampling?.localScaleX) ? sampling.localScaleX : 1, 0.55, 1),
+    y: clampNumber(Number.isFinite(sampling?.localScaleY) ? sampling.localScaleY : 1, 0.55, 1),
+  };
+}
+
+function getCenteredScaledRect(rect, scaleX = 1, scaleY = 1) {
+  const safeScaleX = clampNumber(scaleX, 0.55, 1);
+  const safeScaleY = clampNumber(scaleY, 0.55, 1);
+  const width = rect.width * safeScaleX;
+  const height = rect.height * safeScaleY;
+  return {
+    x: rect.x + (rect.width - width) / 2,
+    y: rect.y + (rect.height - height) / 2,
+    width,
+    height,
+  };
+}
+
+function getSamplingCellRect(cellRect, sampling = getState().sampling) {
+  const localScale = getLocalSamplingScale(sampling);
+  return getCenteredScaledRect(cellRect, localScale.x, localScale.y);
+}
+
 function getInsetRect(cellRect, sampling) {
   const insetRatio = Math.min(0.35, Math.max(0.08, sampling?.insetRatio ?? 0.22));
   const insetX = cellRect.width * insetRatio;
@@ -2127,7 +2437,8 @@ function getTextAssistRect(cellRect) {
 
 function buildSamplingPreviewPoints(cellRect, sampling) {
   const mode = sampling?.mode || "ring";
-  const { outerRect, innerRect, outerMarginRatio } = getSamplingRects(cellRect, sampling);
+  const samplingRect = getSamplingCellRect(cellRect, sampling);
+  const { outerRect, innerRect, outerMarginRatio } = getSamplingRects(samplingRect, sampling);
   const offsetXRatio = clampNumber(sampling?.offsetXRatio ?? 0, -0.28, 0.28);
   const offsetYRatio = clampNumber(sampling?.offsetYRatio ?? 0, -0.28, 0.28);
 
@@ -2139,10 +2450,11 @@ function buildSamplingPreviewPoints(cellRect, sampling) {
       innerRect,
       points: [
         {
-          x: cellRect.x + anchorXRatio * cellRect.width,
-          y: cellRect.y + anchorYRatio * cellRect.height,
+          x: samplingRect.x + anchorXRatio * samplingRect.width,
+          y: samplingRect.y + anchorYRatio * samplingRect.height,
         },
       ],
+      samplingRect,
     };
   }
 
@@ -2168,9 +2480,10 @@ function buildSamplingPreviewPoints(cellRect, sampling) {
   return {
     outerRect,
     innerRect,
+    samplingRect,
     points: ringOffsets.map(([ratioX, ratioY]) => ({
-      x: cellRect.x + clampNumber(ratioX + offsetXRatio, 0.05, 0.95) * cellRect.width,
-      y: cellRect.y + clampNumber(ratioY + offsetYRatio, 0.05, 0.95) * cellRect.height,
+      x: samplingRect.x + clampNumber(ratioX + offsetXRatio, 0.05, 0.95) * samplingRect.width,
+      y: samplingRect.y + clampNumber(ratioY + offsetYRatio, 0.05, 0.95) * samplingRect.height,
     })),
   };
 }
@@ -2315,6 +2628,24 @@ function buildMarkerAnchors(analysis, colorCode) {
 }
 
 function injectEnhancementControls() {
+  const libraryPanel = document.querySelector("#tab-library");
+  if (libraryPanel && !document.querySelector("#libraryDataExportBtn")) {
+    const libraryTools = document.createElement("div");
+    libraryTools.className = "summary-card";
+    libraryTools.style.marginTop = "12px";
+    libraryTools.innerHTML = `
+      <h3>整库导出与导入</h3>
+      <p class="plan-text">这里会打包当前拼豆库里的所有图纸快照、裁剪、色卡、修正结果和项目状态。你可以从电脑导出到手机，也可以在另一台设备上再导入回来。</p>
+      <div class="button-row" style="margin-top:12px;">
+        <button id="libraryDataExportBtn" type="button">导出全部图纸数据</button>
+        <button id="libraryDataImportBtn" class="ghost-btn" type="button">导入图纸数据包</button>
+        <input id="libraryDataImportInput" type="file" accept=".json,application/json" style="display:none;" />
+      </div>
+      <p id="libraryDataStatus" class="empty-text" style="margin-top:10px;">建议每次大改完都导出一份整库数据包，手机和电脑都能留底。</p>
+    `;
+    libraryPanel.appendChild(libraryTools);
+  }
+
   if (step2Panel && !document.querySelector("#paletteImageInput")) {
     const paletteTools = document.createElement("div");
     paletteTools.className = "summary-card";
@@ -2356,42 +2687,42 @@ function injectEnhancementControls() {
         <div class="summary-card" style="margin-top:12px; padding:12px;">
           <h3>手动框选修正</h3>
           <p class="plan-text">如果自动识别把两个色块并成一个，或者你更相信自己眼睛，就直接在左侧拖框，右侧点真实底色，再手填色号保存。手动模式不会被自动 OCR 强行改掉。</p>
-        <div class="field-grid" style="margin-top:12px;">
-          <label class="field">
-            <span>修正模式</span>
-            <select id="paletteReviewModeSelect">
-              <option value="color-first">颜色优先：手填色号 + 内部色块取色保存</option>
-              <option value="ocr-first">色号优先：调用后端 OCR 重识别文字</option>
-            </select>
-          </label>
-          <label class="field">
-            <span>手动色号</span>
-            <input id="paletteReviewCodeInput" type="text" maxlength="12" placeholder="例如 H9 / C20" list="paletteReviewCodeList" />
-            <datalist id="paletteReviewCodeList"></datalist>
-          </label>
-          <div class="field">
-            <span>手动修正</span>
-            <div class="button-row">
-              <button id="paletteReviewRetryBtn" class="ghost-btn" type="button">后端重识别文字</button>
-              <button id="paletteReviewSaveBtn" type="button">把框选新建为色卡</button>
-              <button id="paletteReviewDeleteBtn" class="ghost-btn" type="button">删除选中色块</button>
-              <button id="paletteReviewClearBtn" class="ghost-btn" type="button">清除框选</button>
+          <div class="field-grid" style="margin-top:12px;">
+            <label class="field">
+              <span>修正模式</span>
+              <select id="paletteReviewModeSelect">
+                <option value="color-first">颜色优先：手填色号 + 内部色块取色保存</option>
+                <option value="ocr-first">色号优先：调用后端 OCR 重识别文字</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>手动色号</span>
+              <input id="paletteReviewCodeInput" type="text" maxlength="12" placeholder="例如 H9 / C20" list="paletteReviewCodeList" />
+              <datalist id="paletteReviewCodeList"></datalist>
+            </label>
+            <div class="field">
+              <span>手动修正</span>
+              <div class="button-row">
+                <button id="paletteReviewRetryBtn" class="ghost-btn" type="button">后端重识别文字</button>
+                <button id="paletteReviewSaveBtn" type="button">把框选新建为色卡</button>
+                <button id="paletteReviewDeleteBtn" class="ghost-btn" type="button">删除选中色块</button>
+                <button id="paletteReviewClearBtn" class="ghost-btn" type="button">清除框选</button>
+              </div>
             </div>
           </div>
-        </div>
-        <div class="field-grid" style="margin-top:12px;">
-          <div class="field">
-            <span>真实取色</span>
-            <p class="empty-text" id="paletteReviewColorValue">在右侧放大预览上点一下真实底色，保存时会优先使用你手选的颜色。</p>
-            <div id="paletteReviewPixelGrid" class="palette-pixel-grid"></div>
-          </div>
-          <div class="field">
-            <span>颜色修正</span>
-            <div class="button-row">
-              <button id="paletteReviewResetColorBtn" class="ghost-btn" type="button">清除手选颜色</button>
+          <div class="field-grid" style="margin-top:12px;">
+            <div class="field">
+              <span>真实取色</span>
+              <p class="empty-text" id="paletteReviewColorValue">直接在右侧放大预览上点真实像素，或点下面 5x5 像素板。保存时会优先使用你手选的颜色。</p>
+              <div id="paletteReviewPixelGrid" class="palette-pixel-grid"></div>
+            </div>
+            <div class="field">
+              <span>颜色修正</span>
+              <div class="button-row">
+                <button id="paletteReviewResetColorBtn" class="ghost-btn" type="button">清除手选颜色</button>
+              </div>
             </div>
           </div>
-        </div>
         </div>
         <div class="summary-card" style="margin-top:12px; padding:12px;">
           <h3>交互式网格覆盖</h3>
@@ -2479,7 +2810,7 @@ function injectEnhancementControls() {
       </div>
       <div class="summary-card sampling-inspector-card" style="margin-top:12px;">
         <h3>真实网格采样检查器</h3>
-        <p class="plan-text">这里不是示意图，而是当前图纸里真实的网格放大预览。黄色框 = 当前检查格，绿色框 = 取样外框，蓝色虚线 = 避字区，圆点 = 实际采样点。你可以直接点这个预览切换到附近格子。</p>
+        <p class="plan-text">这里不是示意图，而是当前图纸里真实的网格放大预览。浅黄框 = 原始格子边界，亮黄框 = 局部中心收缩框，绿色框 = 取样外框，蓝色虚线 = 避字区，圆点 = 实际采样点。拖白点后会记住这个收缩比例，并套用到所有格子。</p>
         <div class="field-grid" style="margin-top:12px;">
           <label class="field">
             <span>检查范围</span>
@@ -2697,6 +3028,17 @@ function injectEnhancementControls() {
   resetAlignmentBtn = document.querySelector("#resetAlignmentBtn");
   markerPresetSelect = document.querySelector("#markerPresetSelect");
   markerSummary = document.querySelector("#markerSummary");
+  libraryDataExportBtn = document.querySelector("#libraryDataExportBtn");
+  libraryDataImportBtn = document.querySelector("#libraryDataImportBtn");
+  libraryDataImportInput = document.querySelector("#libraryDataImportInput");
+  libraryDataStatus = document.querySelector("#libraryDataStatus");
+  batchReplaceModeInput = document.querySelector("#batchReplaceModeInput");
+  batchReplaceCodeInput = document.querySelector("#batchReplaceCodeInput");
+  batchReplaceCodeList = document.querySelector("#batchReplaceCodeList");
+  batchReplaceApplyBtn = document.querySelector("#batchReplaceApplyBtn");
+  batchReplaceClearSelectionBtn = document.querySelector("#batchReplaceClearSelectionBtn");
+  batchReplaceClearOverridesBtn = document.querySelector("#batchReplaceClearOverridesBtn");
+  batchReplaceStatus = document.querySelector("#batchReplaceStatus");
 }
 
 function initDefaultPalette() {
@@ -2841,7 +3183,7 @@ function drawSampleDemo() {
   const ctx = sampleDemoCtx;
   const state = getState();
   const cellRect = { x: 24, y: 24, width: 132, height: 132 };
-  const { outerRect, innerRect, points } = buildSamplingPreviewPoints(cellRect, state.sampling);
+  const { samplingRect, outerRect, innerRect, points } = buildSamplingPreviewPoints(cellRect, state.sampling);
   const textRect = getTextAssistRect(cellRect);
 
   ctx.clearRect(0, 0, 180, 180);
@@ -2852,6 +3194,9 @@ function drawSampleDemo() {
   ctx.strokeStyle = "rgba(48, 33, 22, 0.2)";
   ctx.lineWidth = 2;
   ctx.strokeRect(cellRect.x, cellRect.y, cellRect.width, cellRect.height);
+  ctx.strokeStyle = "rgba(244, 198, 79, 0.9)";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(samplingRect.x, samplingRect.y, samplingRect.width, samplingRect.height);
 
   ctx.fillStyle = "rgba(92, 34, 53, 0.85)";
   ctx.font = "800 30px 'Segoe UI'";
@@ -2883,7 +3228,8 @@ function drawSampleDemo() {
   ctx.fillStyle = "#745f4b";
   ctx.font = "600 11px 'Segoe UI'";
   ctx.textAlign = "left";
-  ctx.fillText("绿框 = 取样外框", 8, 14);
+  ctx.fillText("黄框 = 局部中心收缩框", 8, 14);
+  ctx.fillText("绿框 = 取样外框", 8, 28);
   ctx.fillText("蓝框 = 避字内框", 8, 168);
   if (state.recognition?.watermarkTextAssist) {
     ctx.fillText("紫框 = 中心文字识别区", 56, 168);
@@ -2954,6 +3300,89 @@ function renderSampleVotePanel(cellAnalysis) {
 
 function getCellKey(x, y) {
   return `${x},${y}`;
+}
+
+function normalizeColorCodeInput(text) {
+  return String(text || "").trim().toUpperCase();
+}
+
+function buildAvailableColorCodes(state = getState()) {
+  const codes = new Set(state.palette.map((entry) => entry.code));
+  for (const item of state.analysis?.globalStats || []) {
+    if (item.code && item.code !== "EMPTY" && item.code !== "EXCLUDED" && item.code !== "UNSET") {
+      codes.add(item.code);
+    }
+  }
+  return [...codes].sort((left, right) => left.localeCompare(right));
+}
+
+function getSelectedBatchCells(state = getState()) {
+  if (!state.analysis) {
+    return [];
+  }
+  return state.analysis.cells.filter((cell) => analysisBatchSelection.selectedKeys.has(getCellKey(cell.x, cell.y)));
+}
+
+function clearBatchSelection({ keepTargetCode = true } = {}) {
+  analysisBatchSelection.selectedKeys = new Set();
+  analysisBatchSelection.dragRect = null;
+  if (!keepTargetCode) {
+    analysisBatchSelection.targetCode = "";
+    if (batchReplaceCodeInput) {
+      batchReplaceCodeInput.value = "";
+    }
+  }
+
+  if (step4Panel && !document.querySelector("#batchReplaceApplyBtn")) {
+    const batchTools = document.createElement("div");
+    batchTools.className = "summary-card";
+    batchTools.style.marginTop = "12px";
+    batchTools.innerHTML = `
+      <h3>批量替换修正</h3>
+      <p class="plan-text">打开批量模式后，你可以在整体大图里逐个点选错误格子，也可以直接拖框圈一片，再统一替换成正确色号。这个修正会跟着项目一起持久保存。</p>
+      <div class="field-grid" style="margin-top:12px;">
+        <label class="field" style="display:flex; align-items:center; gap:10px; padding-top:26px;">
+          <input id="batchReplaceModeInput" type="checkbox" />
+          <span>开启批量替换模式</span>
+        </label>
+        <label class="field">
+          <span>替换成色号</span>
+          <input id="batchReplaceCodeInput" type="text" maxlength="12" placeholder="例如 H2 / C17" list="batchReplaceCodeList" />
+          <datalist id="batchReplaceCodeList"></datalist>
+        </label>
+        <div class="field">
+          <span>操作</span>
+          <div class="button-row">
+            <button id="batchReplaceApplyBtn" type="button">替换选中格子</button>
+            <button id="batchReplaceClearSelectionBtn" class="ghost-btn" type="button">清除选择</button>
+            <button id="batchReplaceClearOverridesBtn" class="ghost-btn" type="button">清除选中修正</button>
+          </div>
+        </div>
+      </div>
+      <p id="batchReplaceStatus" class="empty-text" style="margin-top:10px;">关闭时仍可正常浏览。打开后：整体大图拖框 = 框选，点单格 = 多选；5x5 里点单格也能加入选择。</p>
+    `;
+    step4Panel.appendChild(batchTools);
+  }
+}
+
+function isBatchReplaceModeEnabled() {
+  return Boolean(batchReplaceModeInput?.checked);
+}
+
+function setBatchReplaceStatus(message, isError = false) {
+  if (!batchReplaceStatus) {
+    return;
+  }
+  batchReplaceStatus.textContent = message;
+  batchReplaceStatus.style.color = isError ? "#c13d3d" : "#745f4b";
+}
+
+function setLibraryDataStatus(message, isError = false) {
+  if (!libraryDataStatus) {
+    return;
+  }
+  libraryDataStatus.textContent = message;
+  libraryDataStatus.style.color = isError ? "#c13d3d" : "#745f4b";
 }
 
 function medianChannel(values) {
@@ -3493,12 +3922,16 @@ function drawRealSamplingInspector() {
   const selectedRect = getCellRectByIndex(state, selected.x, selected.y);
   const selectedAnalysis = getCellAnalysis(state, selected.x, selected.y);
   if (selectedRect) {
-    const { outerRect, innerRect, points } = buildSamplingPreviewPoints(selectedRect, state.sampling);
+    const { samplingRect, outerRect, innerRect, points } = buildSamplingPreviewPoints(selectedRect, state.sampling);
     const textRect = getTextAssistRect(selectedRect);
-    const previewX = offsetX + (selectedRect.x - bounds.x) * scale;
-    const previewY = offsetY + (selectedRect.y - bounds.y) * scale;
-    const previewW = selectedRect.width * scale;
-    const previewH = selectedRect.height * scale;
+    const cellBoxX = offsetX + (selectedRect.x - bounds.x) * scale;
+    const cellBoxY = offsetY + (selectedRect.y - bounds.y) * scale;
+    const cellBoxW = selectedRect.width * scale;
+    const cellBoxH = selectedRect.height * scale;
+    const previewX = offsetX + (samplingRect.x - bounds.x) * scale;
+    const previewY = offsetY + (samplingRect.y - bounds.y) * scale;
+    const previewW = samplingRect.width * scale;
+    const previewH = samplingRect.height * scale;
     const outerX = offsetX + (outerRect.x - bounds.x) * scale;
     const outerY = offsetY + (outerRect.y - bounds.y) * scale;
     const outerW = outerRect.width * scale;
@@ -3507,6 +3940,8 @@ function drawRealSamplingInspector() {
     const innerY = offsetY + (innerRect.y - bounds.y) * scale;
     const innerW = innerRect.width * scale;
     const innerH = innerRect.height * scale;
+    const centerX = previewX + previewW / 2;
+    const centerY = previewY + previewH / 2;
     const textX = offsetX + (textRect.x - bounds.x) * scale;
     const textY = offsetY + (textRect.y - bounds.y) * scale;
     const textW = textRect.width * scale;
@@ -3524,6 +3959,9 @@ function drawRealSamplingInspector() {
       w: { x: previewX, y: previewY + previewH / 2 },
     };
 
+    sampleInspectCtx.strokeStyle = "rgba(244, 198, 79, 0.34)";
+    sampleInspectCtx.lineWidth = 2;
+    sampleInspectCtx.strokeRect(cellBoxX, cellBoxY, cellBoxW, cellBoxH);
     sampleInspectCtx.strokeStyle = "rgba(244, 198, 79, 0.96)";
     sampleInspectCtx.lineWidth = 3;
     sampleInspectCtx.strokeRect(previewX, previewY, previewW, previewH);
@@ -3534,6 +3972,14 @@ function drawRealSamplingInspector() {
     sampleInspectCtx.setLineDash([7, 5]);
     sampleInspectCtx.strokeRect(innerX, innerY, innerW, innerH);
     sampleInspectCtx.setLineDash([]);
+    sampleInspectCtx.strokeStyle = "rgba(244, 198, 79, 0.35)";
+    sampleInspectCtx.lineWidth = 1.2;
+    sampleInspectCtx.beginPath();
+    sampleInspectCtx.moveTo(centerX, cellBoxY);
+    sampleInspectCtx.lineTo(centerX, cellBoxY + cellBoxH);
+    sampleInspectCtx.moveTo(cellBoxX, centerY);
+    sampleInspectCtx.lineTo(cellBoxX + cellBoxW, centerY);
+    sampleInspectCtx.stroke();
     if (state.recognition?.watermarkTextAssist) {
       sampleInspectCtx.strokeStyle = "rgba(186, 90, 214, 0.98)";
       sampleInspectCtx.setLineDash([5, 4]);
@@ -3553,6 +3999,14 @@ function drawRealSamplingInspector() {
       sampleInspectCtx.stroke();
     }
 
+    sampleInspectCtx.beginPath();
+    sampleInspectCtx.fillStyle = "rgba(244, 198, 79, 0.98)";
+    sampleInspectCtx.arc(centerX, centerY, 4.5, 0, Math.PI * 2);
+    sampleInspectCtx.fill();
+    sampleInspectCtx.strokeStyle = "rgba(255,255,255,0.96)";
+    sampleInspectCtx.lineWidth = 1.2;
+    sampleInspectCtx.stroke();
+
     sampleInspectCtx.fillStyle = "#ffffff";
     sampleInspectCtx.strokeStyle = "rgba(244, 198, 79, 0.98)";
     sampleInspectCtx.lineWidth = 2;
@@ -3564,12 +4018,14 @@ function drawRealSamplingInspector() {
     }
 
     sampleInspectOverlay = {
+      cellBox: { x: cellBoxX, y: cellBoxY, width: cellBoxW, height: cellBoxH },
       previewBox: { x: previewX, y: previewY, width: previewW, height: previewH },
       handles,
       handleRadius,
       handleDiameter,
       scale,
       selected,
+      baseRect: selectedRect,
     };
   }
 
@@ -3580,9 +4036,10 @@ function drawRealSamplingInspector() {
   sampleInspectCtx.fillText(`真实采样检查 · ${inspectWindow}x${inspectWindow} · 当前格 ${selected.x},${selected.y}`, 14, 18);
   if (sampleInspectStatus) {
     const cellLabel = selectedAnalysis?.code === "EMPTY" ? "空白格" : `识别 ${selectedAnalysis?.code}`;
+    const localScale = getLocalSamplingScale(state.sampling);
     sampleInspectStatus.textContent = selectedAnalysis
-      ? `当前检查格 (${selected.x},${selected.y}) · ${selectedAnalysis.excluded ? "已按外层剔除跳过" : cellLabel}${selectedAnalysis.manualOverride ? "（手动修正）" : ""}${selectedAnalysis.textAssist?.applied ? ` · 文字辅助 ${selectedAnalysis.textAssist.code}` : ""} · 采样 RGB ${formatRgb(selectedAnalysis.sampledRgb)} · 置信 ${selectedAnalysis.confidence.toFixed(2)}。拖黄框可平移，拖白色圆点可缩放。`
-      : `当前检查格 (${selected.x},${selected.y}) · 还没做整图解析。先用这个视图把网格边界、外框和采样点调准，再点“解析整张网格”。`;
+      ? `当前检查格 (${selected.x},${selected.y}) · ${selectedAnalysis.excluded ? "已按外层剔除跳过" : cellLabel}${selectedAnalysis.manualOverride ? "（手动修正）" : ""}${selectedAnalysis.textAssist?.applied ? ` · 文字辅助 ${selectedAnalysis.textAssist.code}` : ""} · 采样 RGB ${formatRgb(selectedAnalysis.sampledRgb)} · 置信 ${selectedAnalysis.confidence.toFixed(2)} · 局部收缩 ${Math.round(localScale.x * 100)}% x ${Math.round(localScale.y * 100)}%。拖黄框可平移，拖白色圆点会记住这个中心收缩比例，并用于所有格子。`
+      : `当前检查格 (${selected.x},${selected.y}) · 还没做整图解析。先用这个视图把网格边界、外框和采样点调准，再点“解析整张网格”。白点缩放现在会记住局部中心收缩比例。`;
   }
   renderSampleVotePanel(selectedAnalysis);
 }
@@ -3599,12 +4056,18 @@ function drawSamplingOverlayOnCrop(originX, originY, zoomScale) {
     state.selectedPreviewCell?.y || 1,
   );
   if (previewRect) {
-    const { outerRect, innerRect, points } = buildSamplingPreviewPoints(previewRect, state.sampling);
+    const { samplingRect, outerRect, innerRect, points } = buildSamplingPreviewPoints(previewRect, state.sampling);
     const textRect = getTextAssistRect(previewRect);
-    const previewX = originX + (previewRect.x - state.crop.x) * zoomScale;
-    const previewY = originY + (previewRect.y - state.crop.y) * zoomScale;
-    const previewW = previewRect.width * zoomScale;
-    const previewH = previewRect.height * zoomScale;
+    const cellBoxX = originX + (previewRect.x - state.crop.x) * zoomScale;
+    const cellBoxY = originY + (previewRect.y - state.crop.y) * zoomScale;
+    const cellBoxW = previewRect.width * zoomScale;
+    const cellBoxH = previewRect.height * zoomScale;
+    const previewX = originX + (samplingRect.x - state.crop.x) * zoomScale;
+    const previewY = originY + (samplingRect.y - state.crop.y) * zoomScale;
+    const previewW = samplingRect.width * zoomScale;
+    const previewH = samplingRect.height * zoomScale;
+    const centerX = previewX + previewW / 2;
+    const centerY = previewY + previewH / 2;
     const outerX = originX + (outerRect.x - state.crop.x) * zoomScale;
     const outerY = originY + (outerRect.y - state.crop.y) * zoomScale;
     const outerW = outerRect.width * zoomScale;
@@ -3618,6 +4081,9 @@ function drawSamplingOverlayOnCrop(originX, originY, zoomScale) {
     const textW = textRect.width * zoomScale;
     const textH = textRect.height * zoomScale;
 
+    cropCtx.strokeStyle = "rgba(244, 198, 79, 0.32)";
+    cropCtx.lineWidth = 1.5;
+    cropCtx.strokeRect(cellBoxX, cellBoxY, cellBoxW, cellBoxH);
     cropCtx.strokeStyle = "rgba(244, 198, 79, 0.95)";
     cropCtx.lineWidth = 2;
     cropCtx.strokeRect(previewX, previewY, previewW, previewH);
@@ -3627,6 +4093,14 @@ function drawSamplingOverlayOnCrop(originX, originY, zoomScale) {
     cropCtx.setLineDash([6, 4]);
     cropCtx.strokeRect(innerX, innerY, innerW, innerH);
     cropCtx.setLineDash([]);
+    cropCtx.strokeStyle = "rgba(244, 198, 79, 0.3)";
+    cropCtx.lineWidth = 1;
+    cropCtx.beginPath();
+    cropCtx.moveTo(centerX, cellBoxY);
+    cropCtx.lineTo(centerX, cellBoxY + cellBoxH);
+    cropCtx.moveTo(cellBoxX, centerY);
+    cropCtx.lineTo(cellBoxX + cellBoxW, centerY);
+    cropCtx.stroke();
     if (state.recognition?.watermarkTextAssist) {
       cropCtx.strokeStyle = "rgba(186, 90, 214, 0.95)";
       cropCtx.setLineDash([4, 4]);
@@ -3642,6 +4116,11 @@ function drawSamplingOverlayOnCrop(originX, originY, zoomScale) {
       cropCtx.arc(x, y, state.sampling.mode === "anchor" ? Math.max(3, zoomScale * 0.12) : (zoomScale > 5 ? 2.2 : 1.2), 0, Math.PI * 2);
       cropCtx.fill();
     }
+
+    cropCtx.beginPath();
+    cropCtx.fillStyle = "rgba(244, 198, 79, 0.96)";
+    cropCtx.arc(centerX, centerY, Math.max(2.2, zoomScale * 0.11), 0, Math.PI * 2);
+    cropCtx.fill();
   }
 
   if (!state.analysis) {
@@ -4042,6 +4521,46 @@ function renderSummary() {
   }
 }
 
+function renderBatchReplacePanel() {
+  if (!batchReplaceCodeList || !batchReplaceStatus) {
+    return;
+  }
+
+  const state = getState();
+  const codes = buildAvailableColorCodes(state);
+  batchReplaceCodeList.innerHTML = codes.map((code) => `<option value="${code}"></option>`).join("");
+
+  if (batchReplaceCodeInput && document.activeElement !== batchReplaceCodeInput) {
+    batchReplaceCodeInput.value = analysisBatchSelection.targetCode || state.focusColorCode || batchReplaceCodeInput.value || "";
+  }
+
+  const selectedCells = getSelectedBatchCells(state);
+  const selectedOverrideCount = selectedCells.filter((cell) => cell.manualOverride).length;
+  if (batchReplaceApplyBtn) {
+    batchReplaceApplyBtn.disabled = !state.analysis || !selectedCells.length;
+  }
+  if (batchReplaceClearSelectionBtn) {
+    batchReplaceClearSelectionBtn.disabled = !analysisBatchSelection.selectedKeys.size;
+  }
+  if (batchReplaceClearOverridesBtn) {
+    batchReplaceClearOverridesBtn.disabled = !selectedOverrideCount;
+  }
+
+  if (!state.analysis) {
+    setBatchReplaceStatus("先解析整图，再在整体大图或 5x5 里多选 / 框选要修正的格子。");
+    return;
+  }
+
+  const selectedText = selectedCells.length
+    ? `${selectedCells.length} 格：${selectedCells.slice(0, 10).map((cell) => `(${cell.x},${cell.y})`).join(" ")}${selectedCells.length > 10 ? " ..." : ""}`
+    : "还没有选中格子";
+  setBatchReplaceStatus(
+    isBatchReplaceModeEnabled()
+      ? `批量模式已开启。当前选中 ${selectedText}。其中已有手动修正 ${selectedOverrideCount} 格。`
+      : `批量模式已关闭。当前选中 ${selectedText}。打开后可点选或拖框选择。`,
+  );
+}
+
 function renderCalibrationAssistPanel() {
   const state = getState();
   const calibrationAssist = state.calibrationAssist || createEmptyCalibrationAssist();
@@ -4332,6 +4851,7 @@ async function loadProjectById(projectId) {
     currentProjectName: project.name,
     currentProjectStatus: project.status || "todo",
   });
+  clearBatchSelection({ keepTargetCode: false });
   setState(nextState);
   switchTab("tab-step1");
 }
@@ -4397,10 +4917,266 @@ async function importProjectsFromFiles(fileList) {
   }
 }
 
+function buildLibraryBundlePayload() {
+  if (getState().currentProjectId) {
+    syncCurrentProjectToLibrary({ silent: true });
+  }
+
+  const state = getState();
+  const payload = {
+    bundleType: "pindou-library-bundle",
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    libraryProjects: state.libraryProjects || [],
+  };
+
+  if (!state.currentProjectId && state.storedImage?.dataUrl) {
+    payload.currentWorkspace = {
+      name: state.currentProjectName || normalizeProjectName(state.storedImage?.name || ""),
+      status: state.currentProjectStatus || "todo",
+      snapshot: buildProjectSnapshot(state),
+    };
+  }
+
+  return payload;
+}
+
+function downloadLibraryBundle() {
+  const payload = buildLibraryBundlePayload();
+  const projectCount = payload.libraryProjects?.length || 0;
+  if (!projectCount && !payload.currentWorkspace?.snapshot) {
+    setLibraryDataStatus("当前还没有可导出的图纸数据。先保存至少一张图纸进拼豆库。", true);
+    return;
+  }
+
+  const timestamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+/, "").replace("T", "-");
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `pindou-library-${timestamp}.json`;
+  link.click();
+  URL.revokeObjectURL(url);
+  setLibraryDataStatus(`已导出 ${projectCount} 张图纸${payload.currentWorkspace?.snapshot ? "，并包含当前未入库工作区" : ""}。`);
+}
+
+function mergeProjectsById(baseProjects, incomingProjects) {
+  const merged = new Map();
+  for (const project of baseProjects || []) {
+    if (project?.id) {
+      merged.set(project.id, project);
+    }
+  }
+  for (const project of incomingProjects || []) {
+    if (!project?.id) {
+      continue;
+    }
+    const existing = merged.get(project.id);
+    if (!existing) {
+      merged.set(project.id, project);
+      continue;
+    }
+    const existingTime = new Date(existing.updatedAt || existing.createdAt || 0).getTime();
+    const incomingTime = new Date(project.updatedAt || project.createdAt || 0).getTime();
+    merged.set(project.id, incomingTime >= existingTime ? project : existing);
+  }
+  return [...merged.values()].sort(
+    (left, right) => new Date(right.updatedAt || right.createdAt || 0).getTime() - new Date(left.updatedAt || left.createdAt || 0).getTime(),
+  );
+}
+
+async function importLibraryBundleFromFile(file) {
+  if (!file) {
+    return;
+  }
+
+  try {
+    const text = await file.text();
+    const parsed = JSON.parse(text);
+    const importedProjects = Array.isArray(parsed)
+      ? parsed
+      : Array.isArray(parsed.libraryProjects)
+        ? parsed.libraryProjects
+        : [];
+
+    const sanitizedProjects = importedProjects.filter((project) => project?.id && project?.snapshot);
+    if (parsed?.currentWorkspace?.snapshot) {
+      sanitizedProjects.unshift(
+        createProjectRecordFromSnapshot(parsed.currentWorkspace.snapshot, {
+          name: parsed.currentWorkspace.name || parsed.currentWorkspace.snapshot.currentProjectName || "未命名图纸",
+          status: parsed.currentWorkspace.status || parsed.currentWorkspace.snapshot.currentProjectStatus || "todo",
+        }),
+      );
+    }
+
+    if (!sanitizedProjects.length) {
+      setLibraryDataStatus("这个数据包里没有可导入的图纸快照。", true);
+      return;
+    }
+
+    const mergedProjects = mergeProjectsById(getState().libraryProjects || [], sanitizedProjects);
+    patchState({ libraryProjects: mergedProjects });
+    setLibraryDataStatus(`已导入 ${sanitizedProjects.length} 张图纸，当前拼豆库共 ${mergedProjects.length} 张。`);
+  } catch (error) {
+    setLibraryDataStatus(`导入数据包失败：${error?.message || error}`, true);
+  }
+}
+
+function getViewerLayout(state = getState()) {
+  const { analysis, currentChunkIndex } = state;
+  if (!analysis) {
+    return null;
+  }
+
+  const chunk = analysis.chunks[currentChunkIndex];
+  const width = viewerCanvas.clientWidth || 320;
+  const height = Math.max(320, width);
+  const padding = 20;
+  const cellSize = Math.floor((Math.min(width, height) - padding * 2) / Math.max(chunk.width, chunk.height));
+  const gridWidth = chunk.width * cellSize;
+  const gridHeight = chunk.height * cellSize;
+  const offsetX = Math.floor((width - gridWidth) / 2);
+  const offsetY = Math.floor((height - gridHeight) / 2);
+  return { width, height, chunk, cellSize, offsetX, offsetY, gridWidth, gridHeight };
+}
+
+function resolveViewerCellFromPoint(localX, localY, state = getState()) {
+  const layout = getViewerLayout(state);
+  if (!layout) {
+    return null;
+  }
+
+  const localCol = Math.floor((localX - layout.offsetX) / layout.cellSize);
+  const localRow = Math.floor((localY - layout.offsetY) / layout.cellSize);
+  if (
+    localCol < 0 ||
+    localRow < 0 ||
+    localCol >= layout.chunk.width ||
+    localRow >= layout.chunk.height
+  ) {
+    return null;
+  }
+
+  return {
+    x: layout.chunk.startX + localCol,
+    y: layout.chunk.startY + localRow,
+  };
+}
+
+function resolveGridPositionFromLocalPoint(localX, localY, width, height, analysis) {
+  const { cellSize, offsetX, offsetY } = getMapLayout(width, height, analysis);
+  const gridX = Math.floor((localX - offsetX) / cellSize) + 1;
+  const gridY = Math.floor((localY - offsetY) / cellSize) + 1;
+  if (gridX < 1 || gridX > analysis.gridWidth || gridY < 1 || gridY > analysis.gridHeight) {
+    return null;
+  }
+  return { x: gridX, y: gridY };
+}
+
+function toggleBatchSelectionCell(cellX, cellY) {
+  const key = getCellKey(cellX, cellY);
+  if (analysisBatchSelection.selectedKeys.has(key)) {
+    analysisBatchSelection.selectedKeys.delete(key);
+  } else {
+    analysisBatchSelection.selectedKeys.add(key);
+  }
+}
+
+function addBatchSelectionRect(startCell, endCell) {
+  if (!startCell || !endCell) {
+    return 0;
+  }
+
+  const minX = Math.min(startCell.x, endCell.x);
+  const maxX = Math.max(startCell.x, endCell.x);
+  const minY = Math.min(startCell.y, endCell.y);
+  const maxY = Math.max(startCell.y, endCell.y);
+  let added = 0;
+
+  for (let y = minY; y <= maxY; y += 1) {
+    for (let x = minX; x <= maxX; x += 1) {
+      const key = getCellKey(x, y);
+      if (!analysisBatchSelection.selectedKeys.has(key)) {
+        added += 1;
+      }
+      analysisBatchSelection.selectedKeys.add(key);
+    }
+  }
+
+  return added;
+}
+
+function applyBatchReplaceToSelection() {
+  const state = getState();
+  const targetCode = normalizeColorCodeInput(batchReplaceCodeInput?.value || analysisBatchSelection.targetCode);
+  const selectedCells = getSelectedBatchCells(state);
+  if (!state.analysis || !selectedCells.length) {
+    setBatchReplaceStatus("先选中要修正的格子，再做批量替换。", true);
+    return;
+  }
+  if (!targetCode) {
+    setBatchReplaceStatus("先填一个目标色号，再替换。", true);
+    return;
+  }
+  if (!state.palette.some((entry) => entry.code === targetCode)) {
+    setBatchReplaceStatus(`当前色卡里没有 ${targetCode}，请先确认色卡或色号。`, true);
+    return;
+  }
+
+  const nextOverrides = { ...(state.manualOverrides || {}) };
+  for (const cell of selectedCells) {
+    nextOverrides[getCellKey(cell.x, cell.y)] = targetCode;
+  }
+  const nextAnalysis = rerunAnalysisWithCurrentState(nextOverrides);
+  if (!nextAnalysis) {
+    setBatchReplaceStatus("批量替换失败，当前还没有可重算的解析结果。", true);
+    return;
+  }
+
+  analysisBatchSelection.targetCode = targetCode;
+  patchState({
+    manualOverrides: nextOverrides,
+    analysis: nextAnalysis,
+    currentChunkIndex: 0,
+  });
+  setBatchReplaceStatus(`已把 ${selectedCells.length} 个选中格子批量替换为 ${targetCode}。`);
+}
+
+function clearSelectedBatchOverrides() {
+  const state = getState();
+  const selectedCells = getSelectedBatchCells(state);
+  if (!state.analysis || !selectedCells.length) {
+    setBatchReplaceStatus("先选中想恢复自动识别的格子。", true);
+    return;
+  }
+
+  const nextOverrides = { ...(state.manualOverrides || {}) };
+  let removed = 0;
+  for (const cell of selectedCells) {
+    const key = getCellKey(cell.x, cell.y);
+    if (key in nextOverrides) {
+      delete nextOverrides[key];
+      removed += 1;
+    }
+  }
+
+  const nextAnalysis = rerunAnalysisWithCurrentState(nextOverrides);
+  patchState({
+    manualOverrides: nextOverrides,
+    analysis: nextAnalysis,
+    currentChunkIndex: 0,
+  });
+  setBatchReplaceStatus(
+    removed ? `已清除 ${removed} 个选中格子的手动修正，恢复自动识别结果。` : "选中的格子里本来就没有手动修正。",
+    false,
+  );
+}
+
 function drawViewer() {
   const state = getState();
   const { analysis, currentChunkIndex, strategyType, focusColorCode } = state;
   const seedCandidateKeys = new Set((state.seedAssist?.candidates || []).map((item) => getCellKey(item.x, item.y)));
+  const selectedBatchKeys = analysisBatchSelection.selectedKeys;
   const width = viewerCanvas.clientWidth || 320;
   const height = Math.max(320, width);
   ensureCanvasSize(viewerCanvas, width, height);
@@ -4473,6 +5249,11 @@ function drawViewer() {
       viewerCtx.strokeStyle = "rgba(207, 91, 182, 0.95)";
       viewerCtx.lineWidth = 3;
       viewerCtx.strokeRect(x + 6, y + 6, cellSize - 12, cellSize - 12);
+    }
+    if (selectedBatchKeys.has(getCellKey(cell.x, cell.y))) {
+      viewerCtx.strokeStyle = "rgba(44, 196, 198, 0.98)";
+      viewerCtx.lineWidth = Math.max(2, Math.floor(cellSize * 0.12));
+      viewerCtx.strokeRect(x + 4, y + 4, cellSize - 8, cellSize - 8);
     }
   }
 
@@ -4553,6 +5334,7 @@ function drawOverview() {
   const state = getState();
   const { analysis, currentChunkIndex, focusColorCode } = state;
   const seedCandidateKeys = new Set((state.seedAssist?.candidates || []).map((item) => getCellKey(item.x, item.y)));
+  const selectedBatchKeys = analysisBatchSelection.selectedKeys;
   const markerPreset = getMarkerPresets()[state.markerPreset] || getMarkerPresets().lime;
   const markerAnchors = buildMarkerAnchors(analysis, getMarkerTargetCode(state));
   const width = overviewCanvas.clientWidth || 320;
@@ -4587,6 +5369,11 @@ function drawOverview() {
     if (seedCandidateKeys.has(getCellKey(cell.x, cell.y))) {
       overviewCtx.strokeStyle = "rgba(207, 91, 182, 0.9)";
       overviewCtx.lineWidth = Math.max(1, cellSize * 0.22);
+      overviewCtx.strokeRect(x + 1, y + 1, Math.max(1, cellSize - 2), Math.max(1, cellSize - 2));
+    }
+    if (selectedBatchKeys.has(getCellKey(cell.x, cell.y))) {
+      overviewCtx.strokeStyle = "rgba(44, 196, 198, 0.98)";
+      overviewCtx.lineWidth = Math.max(1.5, cellSize * 0.24);
       overviewCtx.strokeRect(x + 1, y + 1, Math.max(1, cellSize - 2), Math.max(1, cellSize - 2));
     }
     if (cell.x === (state.selectedPreviewCell?.x || 1) && cell.y === (state.selectedPreviewCell?.y || 1)) {
@@ -4637,6 +5424,30 @@ function drawOverview() {
     overviewCtx.textBaseline = "middle";
     overviewCtx.fillText(String(anchor.index), x, y);
   }
+
+  if (analysisBatchSelection.dragRect && isBatchReplaceModeEnabled()) {
+    const start = analysisBatchSelection.dragRect.start;
+    const end = analysisBatchSelection.dragRect.end;
+    const minX = Math.min(start.x, end.x);
+    const maxX = Math.max(start.x, end.x);
+    const minY = Math.min(start.y, end.y);
+    const maxY = Math.max(start.y, end.y);
+    overviewCtx.fillStyle = "rgba(44, 196, 198, 0.14)";
+    overviewCtx.strokeStyle = "rgba(44, 196, 198, 0.98)";
+    overviewCtx.lineWidth = 2;
+    overviewCtx.fillRect(
+      offsetX + (minX - 1) * cellSize,
+      offsetY + (minY - 1) * cellSize,
+      (maxX - minX + 1) * cellSize,
+      (maxY - minY + 1) * cellSize,
+    );
+    overviewCtx.strokeRect(
+      offsetX + (minX - 1) * cellSize,
+      offsetY + (minY - 1) * cellSize,
+      (maxX - minX + 1) * cellSize,
+      (maxY - minY + 1) * cellSize,
+    );
+  }
 }
 
 function rerender() {
@@ -4651,6 +5462,7 @@ function rerender() {
   renderSeedAssistPanel();
   renderCalibrationAssistPanel();
   renderSummary();
+  renderBatchReplacePanel();
   drawViewer();
   drawMinimap();
   drawOverview();
@@ -4737,10 +5549,7 @@ async function extractPaletteFromUploadedImage(file) {
 
   const objectUrl = URL.createObjectURL(file);
   try {
-    const image = new Image();
-    image.decoding = "async";
-    image.src = objectUrl;
-    await image.decode();
+    const image = await loadImageElement(objectUrl);
     const canvas = createImageBitmapCanvas(image);
 
     if (canUseBackendOcr()) {
@@ -4896,7 +5705,7 @@ function handleSampleInspectPointerDown(event) {
   const state = getState();
 
   if (sampleInspectOverlay?.previewBox) {
-    const { previewBox, handles, handleRadius, scale } = sampleInspectOverlay;
+    const { previewBox, cellBox, handles, handleRadius, scale } = sampleInspectOverlay;
     let dragMode = null;
     for (const [name, handle] of Object.entries(handles)) {
       if (Math.hypot(localX - handle.x, localY - handle.y) <= handleRadius + 4) {
@@ -4906,11 +5715,12 @@ function handleSampleInspectPointerDown(event) {
     }
 
     if (!dragMode) {
+      const moveBox = cellBox || previewBox;
       const withinPreview =
-        localX >= previewBox.x &&
-        localX <= previewBox.x + previewBox.width &&
-        localY >= previewBox.y &&
-        localY <= previewBox.y + previewBox.height;
+        localX >= moveBox.x &&
+        localX <= moveBox.x + moveBox.width &&
+        localY >= moveBox.y &&
+        localY <= moveBox.y + moveBox.height;
       if (withinPreview) {
         dragMode = "move";
       }
@@ -4925,6 +5735,8 @@ function handleSampleInspectPointerDown(event) {
         scale,
         startAlignment: { ...(state.gridAlignment || {}) },
         startMetrics: getEffectiveGridMetrics(state),
+        startSampling: { ...(state.sampling || {}) },
+        startBaseRect: sampleInspectOverlay?.baseRect ? { ...sampleInspectOverlay.baseRect } : null,
       };
       sampleInspectCanvas.setPointerCapture(event.pointerId);
       return;
@@ -4970,20 +5782,40 @@ function applyInspectorDrag(localX, localY) {
     offsetX += dxImage;
     offsetY += dyImage;
   } else {
+    const baseRect = sampleInspectGesture.startBaseRect || {
+      width: startMetrics.cellWidth,
+      height: startMetrics.cellHeight,
+    };
+    const startScale = getLocalSamplingScale(sampleInspectGesture.startSampling);
+    let localWidth = baseRect.width * startScale.x;
+    let localHeight = baseRect.height * startScale.y;
+
     if (mode.includes("e")) {
-      cellWidth += dxImage;
+      localWidth += dxImage * 2;
     }
     if (mode.includes("w")) {
-      cellWidth -= dxImage;
-      offsetX += dxImage;
+      localWidth -= dxImage * 2;
     }
     if (mode.includes("s")) {
-      cellHeight += dyImage;
+      localHeight += dyImage * 2;
     }
     if (mode.includes("n")) {
-      cellHeight -= dyImage;
-      offsetY += dyImage;
+      localHeight -= dyImage * 2;
     }
+    const localScaleX = clampNumber(localWidth / Math.max(1, baseRect.width), 0.55, 1);
+    const localScaleY = clampNumber(localHeight / Math.max(1, baseRect.height), 0.55, 1);
+    setState((current) => ({
+      ...current,
+      sampling: {
+        ...current.sampling,
+        localScaleX,
+        localScaleY,
+      },
+      selectedPreviewCell: clampPreviewCell(state.selectedPreviewCell, state.gridSize),
+      analysis: null,
+      currentChunkIndex: 0,
+    }));
+    return;
   }
 
   setState((current) => ({
@@ -5197,6 +6029,9 @@ function updatePaletteGridFromInputs() {
   grid.gapXRatio = clampNumber((Number.parseInt(paletteGridGapXInput?.value || String(Math.round((grid.gapXRatio || 0) * 100)), 10) || 0) / 100, 0, 0.48);
   grid.gapYRatio = clampNumber((Number.parseInt(paletteGridGapYInput?.value || String(Math.round((grid.gapYRatio || 0) * 100)), 10) || 0) / 100, 0, 0.48);
   grid.editMode = Boolean(paletteGridEditInput?.checked);
+  delete grid.anchorA;
+  delete grid.anchorB;
+  delete grid.anchorCount;
   saveStateToStorage();
   renderPaletteReview();
 }
@@ -5388,75 +6223,87 @@ function runPaletteSelectionOcr() {
 }
 
 function savePaletteSelectionManually() {
-  const selection = paletteReviewState.selection;
-  const code = paletteReviewCodeInput?.value.trim().toUpperCase();
-  const reviewMode = getState().paletteReviewMode || "color-first";
-  if (!paletteReviewState.sourceCanvas || !selection || selection.width < 8 || selection.height < 8) {
-    setPaletteReviewStatus("请先框选一个色块区域。", true);
-    return;
-  }
-  if (!code) {
-    setPaletteReviewStatus(
-      reviewMode === "ocr-first"
-        ? "请先点“后端重识别文字”或手动填写色号，再保存。"
-        : "请先输入手动色号，例如 H9，再按颜色保存。",
-      true,
-    );
-    return;
-  }
+  try {
+    const activeDetection =
+      paletteReviewState.activeIndex >= 0 ? paletteReviewState.detections[paletteReviewState.activeIndex] : null;
+    const selection = activeDetection?.box || paletteReviewState.selection;
+    const code = paletteReviewCodeInput?.value.trim().toUpperCase();
+    const reviewMode = getState().paletteReviewMode || "color-first";
+    if (!paletteReviewState.sourceCanvas || !selection || selection.width < 8 || selection.height < 8) {
+      setPaletteReviewStatus("保存失败：请先在左侧选中一个色块，或重新框选一个足够大的区域。", true);
+      return;
+    }
+    if (!code) {
+      setPaletteReviewStatus(
+        reviewMode === "ocr-first"
+          ? "保存失败：请先点“后端重识别文字”或手动填写色号。"
+          : "保存失败：请先输入手动色号，例如 H9。",
+        true,
+      );
+      return;
+    }
 
-  const regionCanvas = createCanvasFromRegion(paletteReviewState.sourceCanvas, selection);
-  const localSwatch = buildManualSelectionSwatch(regionCanvas);
-  const rgb = paletteReviewState.manualRgb ? [...paletteReviewState.manualRgb] : localSwatch.rgb;
-  mergePaletteEntries(
-    [
-      {
-        code,
-        rgb,
-        standardRgb: rgb,
+    setPaletteReviewStatus(`正在保存 ${code}...`);
+    const regionCanvas = createCanvasFromRegion(paletteReviewState.sourceCanvas, selection);
+    const localSwatch = buildManualSelectionSwatch(regionCanvas);
+    const rgb = paletteReviewState.manualRgb ? [...paletteReviewState.manualRgb] : localSwatch.rgb;
+    mergePaletteEntries(
+      [
+        {
+          code,
+          rgb,
+          standardRgb: rgb,
+        },
+      ],
+      paletteReviewState.sourceName || "本图颜色卡",
+    );
+    const nextDetection = {
+      swatchIndex: paletteReviewState.detections.length + 1,
+      rgb,
+      box: { ...selection },
+      sampleBox: {
+        x: selection.x + localSwatch.box.x,
+        y: selection.y + localSwatch.box.y,
+        width: localSwatch.box.width,
+        height: localSwatch.box.height,
       },
-    ],
-    paletteReviewState.sourceName || "本图颜色卡",
-  );
-  const nextDetection = {
-    swatchIndex: paletteReviewState.detections.length + 1,
-    rgb,
-    box: { ...selection },
-    sampleBox: {
-      x: selection.x + localSwatch.box.x,
-      y: selection.y + localSwatch.box.y,
-      width: localSwatch.box.width,
-      height: localSwatch.box.height,
-    },
-    manualRgb: paletteReviewState.manualRgb ? [...paletteReviewState.manualRgb] : null,
-    manualPoint: paletteReviewState.manualPoint ? { ...paletteReviewState.manualPoint } : null,
-    code,
-    score: 1,
-  };
-  const activeDetection =
-    paletteReviewState.activeIndex >= 0 ? paletteReviewState.detections[paletteReviewState.activeIndex] : null;
-  const shouldReplaceActive =
-    Boolean(activeDetection) &&
-    Math.abs(activeDetection.box.x - selection.x) < 1 &&
-    Math.abs(activeDetection.box.y - selection.y) < 1 &&
-    Math.abs(activeDetection.box.width - selection.width) < 1 &&
-    Math.abs(activeDetection.box.height - selection.height) < 1;
-  if (shouldReplaceActive) {
-    paletteReviewState.detections[paletteReviewState.activeIndex] = {
-      ...nextDetection,
-      swatchIndex: activeDetection.swatchIndex,
+      manualRgb: paletteReviewState.manualRgb ? [...paletteReviewState.manualRgb] : null,
+      manualPoint: paletteReviewState.manualPoint ? { ...paletteReviewState.manualPoint } : null,
+      code,
+      score: 1,
     };
-  } else {
-    paletteReviewState.detections.push(nextDetection);
-    paletteReviewState.activeIndex = paletteReviewState.detections.length - 1;
+    const shouldReplaceActive =
+      Boolean(activeDetection) &&
+      Math.abs(activeDetection.box.x - selection.x) < 1 &&
+      Math.abs(activeDetection.box.y - selection.y) < 1 &&
+      Math.abs(activeDetection.box.width - selection.width) < 1 &&
+      Math.abs(activeDetection.box.height - selection.height) < 1;
+    if (shouldReplaceActive && paletteReviewState.activeIndex >= 0) {
+      paletteReviewState.detections[paletteReviewState.activeIndex] = {
+        ...nextDetection,
+        swatchIndex: activeDetection.swatchIndex,
+      };
+    } else {
+      paletteReviewState.detections.push(nextDetection);
+      paletteReviewState.activeIndex = paletteReviewState.detections.length - 1;
+    }
+    const nextIndex = shouldReplaceActive && paletteReviewState.activeIndex >= 0 ? paletteReviewState.activeIndex : paletteReviewState.detections.length - 1;
+    paletteReviewState.activeIndex = nextIndex;
+    paletteReviewState.selection = { ...nextDetection.box };
+    if (paletteReviewCodeInput) {
+      paletteReviewCodeInput.value = code;
+    }
+    setPaletteReviewStatus(
+      shouldReplaceActive
+        ? `已覆盖当前色块为 ${code}，并同步更新右侧列表。`
+        : `已新增色块 ${code}，并加入右侧列表。`,
+    );
+    saveStateToStorage();
+    renderPaletteReview();
+  } catch (error) {
+    setPaletteReviewStatus(`保存色卡报错：${error?.message || error}`, true);
+    console.error("savePaletteSelectionManually failed", error);
   }
-  setPaletteReviewStatus(
-    shouldReplaceActive
-      ? `已把当前色块修正为 ${code}，并重新按内部真实色块区取色。`
-      : `已把框选区域作为新的独立色块加入当前色卡：${code}。${reviewMode === "ocr-first" ? "本次按当前识别/填写的色号保存。" : "本次完全按手填色号 + 内部色块颜色保存。"}`,
-  );
-  saveStateToStorage();
-  renderPaletteReview();
 }
 
 function applyCrop() {
@@ -5481,6 +6328,10 @@ function handleMinimapClick(event) {
 }
 
 function handleOverviewClick(event) {
+  if (isBatchReplaceModeEnabled()) {
+    return;
+  }
+
   const state = getState();
   if (!state.analysis || !overviewCanvas) {
     return;
@@ -5515,47 +6366,125 @@ async function handleImageUpload(event) {
     return;
   }
 
-  const objectUrl = URL.createObjectURL(file);
-  const reader = new FileReader();
-  const dataUrl = await new Promise((resolve, reject) => {
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
-  const image = new Image();
-  image.decoding = "async";
-  image.src = objectUrl;
-  await image.decode();
-  URL.revokeObjectURL(objectUrl);
+  try {
+    const objectUrl = URL.createObjectURL(file);
+    const reader = new FileReader();
+    const dataUrl = await new Promise((resolve, reject) => {
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
+    const image = await loadImageElement(objectUrl);
+    URL.revokeObjectURL(objectUrl);
 
-  setState((state) => ({
-    ...state,
-    image: {
-      element: image,
-      width: image.naturalWidth,
-      height: image.naturalHeight,
-    },
-    originalCanvas: createImageBitmapCanvas(image),
-    cropDisplay: buildCropDisplay({
-      width: image.naturalWidth,
-      height: image.naturalHeight,
-    }),
-    crop: {
-      x: 0,
-      y: 0,
-      width: image.naturalWidth,
-      height: image.naturalHeight,
-    },
-    cropConfirmed: false,
-    analysis: null,
-    currentChunkIndex: 0,
-    pickerMode: false,
-    storedImage: createStoredImageRecord(dataUrl, image, file.name),
-    currentProjectId: "",
-    currentProjectName: normalizeProjectName(file.name),
-    currentProjectStatus: "todo",
-  }));
-  setImagePickHint(`已载入图片：${file.name}`);
+    resetPaletteReviewState();
+    setState((state) => ({
+      ...state,
+      image: {
+        element: image,
+        width: image.naturalWidth,
+        height: image.naturalHeight,
+      },
+      originalCanvas: createImageBitmapCanvas(image),
+      cropDisplay: buildCropDisplay({
+        width: image.naturalWidth,
+        height: image.naturalHeight,
+      }),
+      crop: {
+        x: 0,
+        y: 0,
+        width: image.naturalWidth,
+        height: image.naturalHeight,
+      },
+      cropConfirmed: false,
+      analysis: null,
+      currentChunkIndex: 0,
+      pickerMode: false,
+      storedImage: createStoredImageRecord(dataUrl, image, file.name),
+      currentProjectId: "",
+      currentProjectName: normalizeProjectName(file.name),
+      currentProjectStatus: "todo",
+    }));
+    setImagePickHint(`已载入图片：${file.name}`);
+  } catch (error) {
+    console.error("handleImageUpload failed", error);
+    setImagePickHint(`载入图片失败：${error?.message || error}`, true);
+  } finally {
+    try {
+      event.target.value = "";
+    } catch (error) {
+      console.warn("clear image input after upload failed:", error);
+    }
+  }
+}
+
+function handleOverviewPointerDown(event) {
+  if (!isBatchReplaceModeEnabled() || !getState().analysis || !overviewCanvas) {
+    return;
+  }
+
+  const rect = overviewCanvas.getBoundingClientRect();
+  const localX = event.clientX - rect.left;
+  const localY = event.clientY - rect.top;
+  const startCell = resolveGridPositionFromLocalPoint(localX, localY, overviewCanvas.clientWidth || rect.width || 320, overviewCanvas.clientHeight || rect.height || 320, getState().analysis);
+  if (!startCell) {
+    return;
+  }
+
+  overviewSelectionGesture = {
+    pointerId: event.pointerId,
+    startX: localX,
+    startY: localY,
+    startCell,
+    currentCell: startCell,
+    moved: false,
+  };
+  analysisBatchSelection.dragRect = { start: startCell, end: startCell };
+  overviewCanvas.setPointerCapture(event.pointerId);
+  rerender();
+}
+
+function handleOverviewPointerMove(event) {
+  if (!overviewSelectionGesture || overviewSelectionGesture.pointerId !== event.pointerId || !overviewCanvas || !getState().analysis) {
+    return;
+  }
+
+  const rect = overviewCanvas.getBoundingClientRect();
+  const localX = event.clientX - rect.left;
+  const localY = event.clientY - rect.top;
+  const currentCell = resolveGridPositionFromLocalPoint(localX, localY, overviewCanvas.clientWidth || rect.width || 320, overviewCanvas.clientHeight || rect.height || 320, getState().analysis) || overviewSelectionGesture.currentCell;
+  overviewSelectionGesture.currentCell = currentCell;
+  overviewSelectionGesture.moved =
+    overviewSelectionGesture.moved ||
+    Math.abs(localX - overviewSelectionGesture.startX) > 8 ||
+    Math.abs(localY - overviewSelectionGesture.startY) > 8;
+  analysisBatchSelection.dragRect = { start: overviewSelectionGesture.startCell, end: currentCell };
+  rerender();
+}
+
+function handleOverviewPointerUp(event) {
+  if (!overviewSelectionGesture || overviewSelectionGesture.pointerId !== event.pointerId || !overviewCanvas) {
+    return;
+  }
+
+  const gesture = overviewSelectionGesture;
+  overviewSelectionGesture = null;
+  overviewCanvas.releasePointerCapture(event.pointerId);
+  analysisBatchSelection.dragRect = null;
+
+  if (!gesture.moved) {
+    toggleBatchSelectionCell(gesture.startCell.x, gesture.startCell.y);
+    patchState({
+      selectedPreviewCell: clampPreviewCell(gesture.startCell, getState().gridSize),
+    });
+    return;
+  }
+
+  const added = addBatchSelectionRect(gesture.startCell, gesture.currentCell);
+  patchState({
+    selectedPreviewCell: clampPreviewCell(gesture.currentCell, getState().gridSize),
+  });
+  setBatchReplaceStatus(`已框选 ${added} 个格子。可继续框别的区域，最后统一替换。`);
 }
 
 function resetCropToFullImage() {
@@ -5762,10 +6691,39 @@ function handleViewerPointerDown(event) {
     return;
   }
 
+  if (isBatchReplaceModeEnabled()) {
+    viewerSelectionGesture = {
+      start: getViewerPoint(event),
+      pointerId: event.pointerId,
+    };
+    return;
+  }
+
   viewerSwipeStart = getViewerPoint(event);
 }
 
 function handleViewerPointerUp(event) {
+  if (isBatchReplaceModeEnabled()) {
+    if (!viewerSelectionGesture || viewerSelectionGesture.pointerId !== event.pointerId) {
+      return;
+    }
+    const endPoint = getViewerPoint(event);
+    const deltaX = endPoint.x - viewerSelectionGesture.start.x;
+    const deltaY = endPoint.y - viewerSelectionGesture.start.y;
+    const state = getState();
+    if (Math.abs(deltaX) <= 12 && Math.abs(deltaY) <= 12) {
+      const gridPosition = resolveViewerCellFromPoint(endPoint.x, endPoint.y, state);
+      if (gridPosition) {
+        toggleBatchSelectionCell(gridPosition.x, gridPosition.y);
+        patchState({
+          selectedPreviewCell: clampPreviewCell(gridPosition, state.gridSize),
+        });
+      }
+    }
+    viewerSelectionGesture = null;
+    return;
+  }
+
   if (!viewerSwipeStart) {
     return;
   }
@@ -5811,6 +6769,30 @@ function downloadAnalysisJson() {
   URL.revokeObjectURL(url);
 }
 
+function bindTap(element, handler) {
+  if (!element) {
+    return;
+  }
+
+  let touchHandled = false;
+  element.addEventListener("click", (event) => {
+    if (touchHandled) {
+      touchHandled = false;
+      return;
+    }
+    handler(event);
+  });
+  element.addEventListener(
+    "touchend",
+    (event) => {
+      touchHandled = true;
+      event.preventDefault();
+      handler(event);
+    },
+    { passive: false },
+  );
+}
+
 function bindEvents() {
   for (const button of tabBtns) {
     button.addEventListener("click", (event) => {
@@ -5821,10 +6803,23 @@ function bindEvents() {
     });
   }
 
+  imageInput?.addEventListener("click", () => {
+    try {
+      imageInput.value = "";
+    } catch (error) {
+      console.warn("clear image input on click failed:", error);
+    }
+  });
   imageInput.addEventListener("change", handleImageUpload);
   imagePickBtn?.addEventListener("click", openImagePicker);
   saveProjectBtn?.addEventListener("click", saveCurrentProjectToLibrary);
   importProjectBtn?.addEventListener("click", () => libraryImageInput?.click());
+  libraryDataExportBtn?.addEventListener("click", downloadLibraryBundle);
+  libraryDataImportBtn?.addEventListener("click", () => libraryDataImportInput?.click());
+  libraryDataImportInput?.addEventListener("change", async (event) => {
+    await importLibraryBundleFromFile(event.target.files?.[0]);
+    event.target.value = "";
+  });
   libraryImageInput?.addEventListener("change", async (event) => {
     await importProjectsFromFiles(event.target.files);
     event.target.value = "";
@@ -5916,20 +6911,36 @@ function bindEvents() {
     extractPaletteFromUploadedImage(event.target.files?.[0]);
     event.target.value = "";
   });
-  paletteReviewRetryBtn?.addEventListener("click", runPaletteSelectionOcr);
+  bindTap(paletteReviewRetryBtn, runPaletteSelectionOcr);
   paletteReviewSaveBtn?.addEventListener("click", savePaletteSelectionManually);
-  paletteReviewDeleteBtn?.addEventListener("click", deleteActivePaletteReviewDetection);
+  paletteReviewSaveBtn?.addEventListener(
+    "touchend",
+    (event) => {
+      event.preventDefault();
+      savePaletteSelectionManually();
+    },
+    { passive: false },
+  );
+  bindTap(paletteReviewDeleteBtn, deleteActivePaletteReviewDetection);
   paletteReviewDetailCanvas?.addEventListener("pointerdown", handlePaletteReviewDetailPointerDown);
-  paletteReviewResetColorBtn?.addEventListener("click", resetPaletteReviewManualColor);
+  paletteReviewDetailCanvas?.addEventListener("pointerup", handlePaletteReviewDetailPointerDown);
+  paletteReviewDetailCanvas?.addEventListener("click", handlePaletteReviewDetailPointerDown);
+  paletteReviewDetailCanvas?.addEventListener("mouseup", handlePaletteReviewDetailPointerDown);
+  paletteReviewDetailCanvas?.addEventListener("touchstart", handlePaletteReviewDetailPointerDown, { passive: false });
+  step2Panel?.addEventListener("pointerdown", handlePaletteReviewDetailDelegated, true);
+  step2Panel?.addEventListener("click", handlePaletteReviewDetailDelegated, true);
+  step2Panel?.addEventListener("mouseup", handlePaletteReviewDetailDelegated, true);
+  step2Panel?.addEventListener("touchstart", handlePaletteReviewDetailDelegated, { passive: false, capture: true });
+  bindTap(paletteReviewResetColorBtn, resetPaletteReviewManualColor);
   paletteGridRowsInput?.addEventListener("input", updatePaletteGridFromInputs);
   paletteGridColsInput?.addEventListener("input", updatePaletteGridFromInputs);
   paletteGridGapXInput?.addEventListener("input", updatePaletteGridFromInputs);
   paletteGridGapYInput?.addEventListener("input", updatePaletteGridFromInputs);
   paletteGridEditInput?.addEventListener("change", updatePaletteGridFromInputs);
-  paletteGridInitBtn?.addEventListener("click", initializePaletteGridFromCurrentView);
-  paletteGridApplyBtn?.addEventListener("click", applyPaletteGridRecognition);
-  paletteGridResetBtn?.addEventListener("click", clearPaletteGrid);
-  paletteReviewClearBtn?.addEventListener("click", () => {
+  bindTap(paletteGridInitBtn, initializePaletteGridFromCurrentView);
+  bindTap(paletteGridApplyBtn, applyPaletteGridRecognition);
+  bindTap(paletteGridResetBtn, clearPaletteGrid);
+  bindTap(paletteReviewClearBtn, () => {
     paletteReviewState.selection = null;
     paletteReviewState.manualRgb = null;
     paletteReviewState.manualPoint = null;
@@ -5941,6 +6952,33 @@ function bindEvents() {
     renderPaletteReview();
     saveStateToStorage();
   });
+  paletteReviewPixelGrid?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-palette-pixel-index]");
+    if (!button) {
+      return;
+    }
+    const index = Number.parseInt(button.dataset.palettePixelIndex, 10);
+    if (!Number.isFinite(index)) {
+      return;
+    }
+    applyManualPalettePixelSelection(index);
+  });
+  paletteReviewPixelGrid?.addEventListener(
+    "touchend",
+    (event) => {
+      const button = event.target.closest("[data-palette-pixel-index]");
+      if (!button) {
+        return;
+      }
+      event.preventDefault();
+      const index = Number.parseInt(button.dataset.palettePixelIndex, 10);
+      if (!Number.isFinite(index)) {
+        return;
+      }
+      applyManualPalettePixelSelection(index);
+    },
+    { passive: false },
+  );
   paletteReviewList?.addEventListener("click", (event) => {
     const button = event.target.closest("[data-review-index]");
     if (!button) {
@@ -6119,6 +7157,11 @@ function bindEvents() {
         cellWidthScale: 1,
         cellHeightScale: 1,
       },
+      sampling: {
+        ...getState().sampling,
+        localScaleX: 1,
+        localScaleY: 1,
+      },
       selectedPreviewCell: { x: 1, y: 1 },
     });
     resetAnalysis();
@@ -6154,6 +7197,21 @@ function bindEvents() {
   });
   clearFocusColorBtn?.addEventListener("click", () => patchState({ focusColorCode: "" }));
   markerPresetSelect?.addEventListener("change", () => patchState({ markerPreset: markerPresetSelect.value }));
+  batchReplaceModeInput?.addEventListener("change", () => {
+    if (!batchReplaceModeInput.checked) {
+      analysisBatchSelection.dragRect = null;
+    }
+    rerender();
+  });
+  batchReplaceCodeInput?.addEventListener("input", () => {
+    analysisBatchSelection.targetCode = normalizeColorCodeInput(batchReplaceCodeInput.value);
+  });
+  batchReplaceApplyBtn?.addEventListener("click", applyBatchReplaceToSelection);
+  batchReplaceClearSelectionBtn?.addEventListener("click", () => {
+    clearBatchSelection();
+    rerender();
+  });
+  batchReplaceClearOverridesBtn?.addEventListener("click", clearSelectedBatchOverrides);
   cropCanvas.addEventListener("pointerdown", handleCropPointerDown);
   cropCanvas.addEventListener("pointermove", handleCropPointerMove);
   cropCanvas.addEventListener("pointerup", handleCropPointerUp);
@@ -6164,6 +7222,10 @@ function bindEvents() {
   paletteReviewCanvas?.addEventListener("pointercancel", handlePaletteReviewPointerUp);
   viewerCanvas.addEventListener("pointerdown", handleViewerPointerDown);
   viewerCanvas.addEventListener("pointerup", handleViewerPointerUp);
+  overviewCanvas?.addEventListener("pointerdown", handleOverviewPointerDown);
+  overviewCanvas?.addEventListener("pointermove", handleOverviewPointerMove);
+  overviewCanvas?.addEventListener("pointerup", handleOverviewPointerUp);
+  overviewCanvas?.addEventListener("pointercancel", handleOverviewPointerUp);
   minimapCanvas?.addEventListener("click", handleMinimapClick);
   overviewCanvas?.addEventListener("click", handleOverviewClick);
   window.addEventListener("resize", () => {
@@ -6189,5 +7251,6 @@ subscribe((state) => {
 });
 bindEvents();
 restoreStateFromStorage().finally(() => {
+  switchTab("tab-library");
   rerender();
 });

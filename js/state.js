@@ -24,6 +24,8 @@ const initialState = {
     innerExclusionRatio: 0.24,
     offsetXRatio: 0,
     offsetYRatio: 0,
+    localScaleX: 1,
+    localScaleY: 1,
     anchorXRatio: 0.18,
     anchorYRatio: 0.18,
     patchRadius: 1,

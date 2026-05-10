@@ -3,8 +3,10 @@ from __future__ import annotations
 import argparse
 import importlib
 import io
+import json
 import os
 import re
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -12,8 +14,16 @@ import numpy as np
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parent
-LOCAL_CACHE_DIR = ROOT / ".paddle-cache"
-LOCAL_CACHE_DIR.mkdir(exist_ok=True)
+DEPLOYMENT_MODE = os.environ.get("PINDOU_DEPLOYMENT_MODE", "full").strip().lower()
+OCR_ENGINE_PREFERENCE = os.environ.get("PINDOU_OCR_ENGINE", "auto").strip().lower()
+if os.environ.get("PINDOU_CACHE_DIR"):
+    LOCAL_CACHE_DIR = Path(os.environ["PINDOU_CACHE_DIR"])
+elif os.environ.get("VERCEL"):
+    LOCAL_CACHE_DIR = Path(tempfile.gettempdir()) / "pindou-cache"
+else:
+    LOCAL_CACHE_DIR = ROOT / ".paddle-cache"
+LOCAL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+STATE_FILE = Path(os.environ.get("PINDOU_STATE_FILE", str(ROOT / "pindou-persist-state.json")))
 drive, tail = os.path.splitdrive(str(LOCAL_CACHE_DIR))
 os.environ["HOME"] = str(LOCAL_CACHE_DIR)
 os.environ["USERPROFILE"] = str(LOCAL_CACHE_DIR)
@@ -46,39 +56,69 @@ OCR_ERROR: str | None = None
 OCR_ENGINE_NAME = "unavailable"
 
 
+def read_persisted_state() -> dict[str, Any]:
+    if not STATE_FILE.exists():
+        return {}
+
+    try:
+        return json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def write_persisted_state(payload: dict[str, Any]) -> None:
+    temp_file = STATE_FILE.with_suffix(".tmp")
+    temp_file.write_text(
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+        encoding="utf-8",
+    )
+    temp_file.replace(STATE_FILE)
+
+
 def get_ocr_engine() -> Any:
     global OCR_ENGINE, OCR_ERROR, OCR_ENGINE_NAME
     if OCR_ENGINE is not None:
         return OCR_ENGINE
     errors: list[str] = []
 
-    try:
-        rapid_module = importlib.import_module("rapidocr_onnxruntime")
-        OCR_ENGINE = ("rapidocr", rapid_module.RapidOCR())
-        OCR_ENGINE_NAME = "rapidocr"
-        OCR_ERROR = None
-        return OCR_ENGINE
-    except Exception as error:  # pragma: no cover - runtime dependency
-        errors.append(f"RapidOCR 初始化失败: {error}")
+    preferred_order: list[str]
+    if OCR_ENGINE_PREFERENCE == "rapidocr":
+        preferred_order = ["rapidocr"]
+    elif OCR_ENGINE_PREFERENCE == "paddleocr" or OCR_ENGINE_PREFERENCE == "paddle":
+        preferred_order = ["paddleocr"]
+    else:
+        preferred_order = ["rapidocr", "paddleocr"]
 
-    try:
-        paddle_module = importlib.import_module("paddleocr")
-        OCR_ENGINE = (
-            "paddleocr",
-            paddle_module.PaddleOCR(
-                use_angle_cls=False,
-                lang="en",
-                show_log=False,
-                det=True,
-                rec=True,
-                cls=False,
-            ),
-        )
-        OCR_ENGINE_NAME = "paddleocr"
-        OCR_ERROR = None
-        return OCR_ENGINE
-    except Exception as error:  # pragma: no cover - runtime dependency
-        errors.append(f"PaddleOCR 初始化失败: {error}")
+    for engine_name in preferred_order:
+        if engine_name == "rapidocr":
+            try:
+                rapid_module = importlib.import_module("rapidocr_onnxruntime")
+                OCR_ENGINE = ("rapidocr", rapid_module.RapidOCR())
+                OCR_ENGINE_NAME = "rapidocr"
+                OCR_ERROR = None
+                return OCR_ENGINE
+            except Exception as error:  # pragma: no cover - runtime dependency
+                errors.append(f"RapidOCR 初始化失败: {error}")
+            continue
+
+        try:
+            paddle_module = importlib.import_module("paddleocr")
+            OCR_ENGINE = (
+                "paddleocr",
+                paddle_module.PaddleOCR(
+                    use_angle_cls=False,
+                    lang="en",
+                    show_log=False,
+                    det=True,
+                    rec=True,
+                    cls=False,
+                ),
+            )
+            OCR_ENGINE_NAME = "paddleocr"
+            OCR_ERROR = None
+            return OCR_ENGINE
+        except Exception as error:  # pragma: no cover - runtime dependency
+            errors.append(f"PaddleOCR 初始化失败: {error}")
 
     OCR_ENGINE_NAME = "unavailable"
     OCR_ERROR = "；".join(errors) if errors else "没有可用的 OCR 引擎。"
@@ -772,6 +812,25 @@ def build_app() -> Any:
             "ocrError": OCR_ERROR,
         }
 
+    @app.get("/api/state")
+    async def get_persisted_state() -> dict[str, Any]:
+        payload = read_persisted_state()
+        return {
+            "ok": True,
+            "state": payload or None,
+        }
+
+    @app.put("/api/state")
+    async def put_persisted_state(payload: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="state payload must be an object")
+
+        write_persisted_state(payload)
+        return {
+            "ok": True,
+            "saved": True,
+        }
+
     @app.post("/api/ocr/palette-card")
     async def ocr_palette_card(file: UploadFile = File(...)) -> Any:
         content = await file.read()
@@ -846,7 +905,8 @@ def build_app() -> Any:
     async def root() -> Any:
         return FileResponse(ROOT / "index-local-browser.html")
 
-    app.mount("/", StaticFiles(directory=str(ROOT), html=True), name="static")
+    if DEPLOYMENT_MODE != "api_only":
+        app.mount("/", StaticFiles(directory=str(ROOT), html=True), name="static")
     return app
 
 

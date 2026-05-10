@@ -5,18 +5,26 @@ $port = 8124
 
 Set-Location $root
 
-$addresses = Get-NetIPAddress -AddressFamily IPv4 |
+$addresses = ipconfig |
+  Select-String "IPv4 Address[^\:]*:\s*([0-9\.]+)" |
+  ForEach-Object { $_.Matches[0].Groups[1].Value } |
   Where-Object {
-    $_.IPAddress -notlike "127.*" -and
-    $_.IPAddress -notlike "169.254.*" -and
-    $_.PrefixOrigin -ne "WellKnown"
+    $_ -notlike "127.*" -and
+    $_ -notlike "169.254.*" -and
+    $_ -notlike "198.18.*"
   } |
-  Select-Object -ExpandProperty IPAddress -Unique
+  Select-Object -Unique
 
 Write-Host ""
 Write-Host "Tablet server starting..." -ForegroundColor Cyan
 Write-Host ""
-Write-Host "Open one of these URLs on your tablet browser:" -ForegroundColor Yellow
+Write-Host "This computer only (fixed URL every time):" -ForegroundColor Yellow
+Write-Host ""
+Write-Host ("  http://localhost:{0}/index-local-browser.html" -f $port) -ForegroundColor Green
+Write-Host ("  http://localhost:{0}/index-tablet-standalone.html" -f $port) -ForegroundColor Green
+Write-Host ""
+
+Write-Host "Phone / tablet on the same Wi-Fi (use current LAN IP):" -ForegroundColor Yellow
 Write-Host ""
 
 foreach ($ip in $addresses) {
@@ -25,8 +33,9 @@ foreach ($ip in $addresses) {
   Write-Host ""
 }
 
-Write-Host "Recommended on tablet:" -ForegroundColor Yellow
-Write-Host ("  http://localhost:{0}/index-tablet-standalone.html" -f $port)
+Write-Host "Note:" -ForegroundColor Yellow
+Write-Host "  localhost only works on this computer itself."
+Write-Host "  If the Wi-Fi changes, the LAN IP may change too."
 Write-Host ""
 Write-Host "Keep this window open while using the tablet." -ForegroundColor Yellow
 Write-Host "This version also exposes OCR API at /api/ocr/palette-card." -ForegroundColor Yellow

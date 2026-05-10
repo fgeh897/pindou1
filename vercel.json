@@ -1,0 +1,26 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/ocr_backend.py": {
+      "maxDuration": 300
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/api/health",
+      "destination": "/api/ocr_backend.py"
+    },
+    {
+      "source": "/api/ocr/(.*)",
+      "destination": "/api/ocr_backend.py"
+    },
+    {
+      "source": "/",
+      "destination": "/index-local-browser.html"
+    },
+    {
+      "source": "/tablet",
+      "destination": "/index-tablet-standalone.html"
+    }
+  ]
+}

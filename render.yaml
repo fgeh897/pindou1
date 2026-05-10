@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: pindou-ocr-backend
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./ocr-backend.Dockerfile
+    healthCheckPath: /api/health
+    autoDeploy: true
+    disk:
+      name: pindou-ocr-data
+      mountPath: /var/data
+      sizeGB: 5
+    envVars:
+      - key: PINDOU_DEPLOYMENT_MODE
+        value: api_only
+      - key: PINDOU_CACHE_DIR
+        value: /var/data/pindou-cache
+      - key: PINDOU_STATE_FILE
+        value: /var/data/pindou-persist-state.json

@@ -1,0 +1,8 @@
+.git
+.paddle-cache
+__pycache__
+ocr-server.log
+ocr-server.err.log
+pindou-persist-state.json
+wechat-miniapp
+新建文件夹

@@ -266,6 +266,17 @@ button:not(:disabled):hover { opacity: 0.85; }
   margin-top: 10px;
 }
 
+#paletteReviewDetailCanvas {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-height: 132px;
+  margin: 0 auto;
+  touch-action: none;
+  cursor: crosshair;
+  background: #fffdf8;
+}
+
 #minimapCanvas, #overviewCanvas {
   display: block;
   touch-action: none;
@@ -458,16 +469,26 @@ button:not(:disabled):hover { opacity: 0.85; }
 
 .palette-pixel-grid-cells {
   display: grid;
-  grid-template-columns: repeat(5, 14px);
-  gap: 3px;
+  grid-template-columns: repeat(5, 22px);
+  gap: 6px;
 }
 
 .palette-pixel-cell {
-  width: 14px;
-  height: 14px;
-  border-radius: 3px;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
   border: 1px solid rgba(48,33,22,0.12);
   display: block;
+  padding: 0;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  background-clip: padding-box;
+}
+
+.palette-pixel-cell.is-active {
+  outline: 2px solid #9d5333;
+  outline-offset: 1px;
 }
 
 .library-grid {
@@ -746,4 +767,55 @@ button:not(:disabled):hover { opacity: 0.85; }
   body { padding: 24px 20px 56px; }
   .panel { padding: 22px; }
   .viewer-layout { grid-template-columns: 200px 1fr; }
+}
+
+@media (min-width: 900px) and (orientation: landscape) {
+  body { padding: 12px 12px 28px; }
+  .app-shell { max-width: 1380px; }
+  .hero { padding-bottom: 10px; }
+  .hero h1 { font-size: clamp(1.8rem, 3.5vw, 2.6rem); }
+  .tab-bar {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    backdrop-filter: blur(14px);
+  }
+  .panel { padding: 16px; }
+  .panel-head {
+    align-items: center;
+    margin-bottom: 12px;
+  }
+  .field-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .palette-grid {
+    grid-template-columns: minmax(0, 1.2fr) 120px minmax(0, 1.2fr);
+  }
+  .meta-grid, .stats-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  .viewer-layout {
+    grid-template-columns: 160px 1fr;
+    gap: 10px;
+  }
+  .palette-review-layout {
+    grid-template-columns: minmax(0, 1.4fr) minmax(320px, 0.8fr);
+    align-items: start;
+  }
+  .library-grid {
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  }
+  .button-row, .viewer-toolbar {
+    gap: 8px;
+  }
+  #cropCanvas, #viewerCanvas, #overviewCanvas, #paletteReviewCanvas, #sampleInspectCanvas {
+    min-height: 240px;
+  }
+  #overviewCanvas {
+    max-height: 64vh;
+  }
+  .sample-votes-list, .seed-list, .palette-review-list {
+    max-height: 220px;
+  }
 }

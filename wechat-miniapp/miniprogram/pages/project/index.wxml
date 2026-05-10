@@ -1,0 +1,22 @@
+<view class="page">
+  <view class="card" wx:if="{{project}}">
+    <view class="title">{{project.name}}</view>
+    <view class="subtitle">
+      状态：{{project.status}} · {{project.gridWidth}} x {{project.gridHeight}}
+    </view>
+  </view>
+
+  <view class="card" wx:if="{{project}}">
+    <view class="field">
+      <text class="field-label">备注</text>
+      <view class="subtitle">{{project.notes || "暂无备注"}}</view>
+    </view>
+
+    <view class="field">
+      <text class="field-label">最后更新时间</text>
+      <view class="subtitle">{{project.updatedAt}}</view>
+    </view>
+
+    <button class="primary-btn" bindtap="handleEdit">继续编辑</button>
+  </view>
+</view>

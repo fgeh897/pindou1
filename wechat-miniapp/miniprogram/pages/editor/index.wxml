@@ -1,0 +1,40 @@
+<view class="page">
+  <view class="card">
+    <view class="title">{{projectId ? "编辑图纸" : "新建图纸"}}</view>
+    <view class="subtitle">
+      这一页先存基础信息。后续我们再把网页版的裁剪、解析、色卡逻辑一步步迁进来。
+    </view>
+  </view>
+
+  <view class="card">
+    <view class="field">
+      <text class="field-label">图纸名称</text>
+      <input class="field-input" placeholder="例如：奶牛杯垫" value="{{form.name}}" data-field="name" bindinput="handleInput" />
+    </view>
+
+    <view class="row">
+      <view class="field">
+        <text class="field-label">宽度</text>
+        <input class="field-input" type="number" value="{{form.gridWidth}}" data-field="gridWidth" bindinput="handleInput" />
+      </view>
+      <view class="field">
+        <text class="field-label">高度</text>
+        <input class="field-input" type="number" value="{{form.gridHeight}}" data-field="gridHeight" bindinput="handleInput" />
+      </view>
+    </view>
+
+    <view class="field">
+      <text class="field-label">状态</text>
+      <picker mode="selector" range="{{statusOptions}}" range-key="label" value="{{statusIndex}}" bindchange="handleStatusChange">
+        <view class="field-picker">{{statusOptions[statusIndex].label}}</view>
+      </picker>
+    </view>
+
+    <view class="field">
+      <text class="field-label">备注</text>
+      <textarea class="field-textarea" placeholder="这里先保存图纸说明、进度备注或后续解析参数。" value="{{form.notes}}" data-field="notes" bindinput="handleInput"></textarea>
+    </view>
+
+    <button class="primary-btn" bindtap="handleSave" loading="{{saving}}">保存图纸</button>
+  </view>
+</view>

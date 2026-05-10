@@ -26,6 +26,32 @@ const TEXT_REGION_WIDTH_RATIO = 0.6;
 const TEXT_REGION_HEIGHT_RATIO = 0.64;
 const TEXT_TEMPLATE_CACHE = new Map();
 
+function getLocalSamplingRect(cellStartX, cellStartY, cellWidth, cellHeight, sampling = {}) {
+  const localScaleX = clamp(
+    Number.isFinite(sampling.localScaleX) ? sampling.localScaleX : 1,
+    0.55,
+    1,
+  );
+  const localScaleY = clamp(
+    Number.isFinite(sampling.localScaleY) ? sampling.localScaleY : 1,
+    0.55,
+    1,
+  );
+  const width = cellWidth * localScaleX;
+  const height = cellHeight * localScaleY;
+  const x = cellStartX + (cellWidth - width) / 2;
+  const y = cellStartY + (cellHeight - height) / 2;
+
+  return {
+    x,
+    y,
+    width,
+    height,
+    localScaleX,
+    localScaleY,
+  };
+}
+
 function getPixelFromImageData(imageData, width, x, y) {
   const px = clamp(Math.floor(x), 0, width - 1);
   const py = clamp(Math.floor(y), 0, imageData.height - 1);
@@ -377,12 +403,17 @@ function buildBackgroundSamplePixels(imageData, imageWidth, cellStartX, cellStar
   );
   const pixels = [];
   const points = [];
+  const sampleRect = getLocalSamplingRect(cellStartX, cellStartY, cellWidth, cellHeight, sampling);
+  const sampleStartX = sampleRect.x;
+  const sampleStartY = sampleRect.y;
+  const sampleWidth = sampleRect.width;
+  const sampleHeight = sampleRect.height;
 
   if (mode === "anchor") {
     const anchorXRatio = clamp(Number.isFinite(sampling.anchorXRatio) ? sampling.anchorXRatio : 0.18, 0.05, 0.95);
     const anchorYRatio = clamp(Number.isFinite(sampling.anchorYRatio) ? sampling.anchorYRatio : 0.18, 0.05, 0.95);
-    const sampleX = cellStartX + anchorXRatio * cellWidth;
-    const sampleY = cellStartY + anchorYRatio * cellHeight;
+    const sampleX = sampleStartX + anchorXRatio * sampleWidth;
+    const sampleY = sampleStartY + anchorYRatio * sampleHeight;
     pixels.push(getPatchAverageFromImageData(imageData, imageWidth, sampleX, sampleY, sampling.patchRadius || 1));
     points.push({ x: sampleX, y: sampleY });
     return { pixels, points };
@@ -395,8 +426,8 @@ function buildBackgroundSamplePixels(imageData, imageWidth, cellStartX, cellStar
       shiftedX === "left" ? outerMarginRatio : shiftedX === "right" ? 1 - outerMarginRatio : shiftedX;
     const ratioY =
       shiftedY === "top" ? outerMarginRatio : shiftedY === "bottom" ? 1 - outerMarginRatio : shiftedY;
-    const sampleX = clamp(cellStartX + ratioX * cellWidth, cellStartX, cellStartX + cellWidth);
-    const sampleY = clamp(cellStartY + ratioY * cellHeight, cellStartY, cellStartY + cellHeight);
+    const sampleX = clamp(sampleStartX + ratioX * sampleWidth, sampleStartX, sampleStartX + sampleWidth);
+    const sampleY = clamp(sampleStartY + ratioY * sampleHeight, sampleStartY, sampleStartY + sampleHeight);
     if (
       ratioX > innerExclusionRatio &&
       ratioX < 1 - innerExclusionRatio &&

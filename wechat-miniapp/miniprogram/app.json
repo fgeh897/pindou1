@@ -1,0 +1,17 @@
+{
+  "pages": [
+    "pages/auth/index",
+    "pages/home/index",
+    "pages/editor/index",
+    "pages/project/index"
+  ],
+  "window": {
+    "navigationBarTitleText": "拼豆图纸助手",
+    "navigationBarBackgroundColor": "#ffffff",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#f7f4ef",
+    "backgroundTextStyle": "light"
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}

@@ -1,0 +1,15 @@
+.vercel/
+.paddle-cache/
+__pycache__/
+*.pyc
+*.pyo
+*.check.pyc*
+*.log
+node_modules/
+pindou-persist-state.json
+pindou_server.check.pyc
+ocr_backend.check.pyc
+ocr-response.json
+ocr-server.err.log
+ocr-server.log
+wechat-miniapp/project.private.config.json

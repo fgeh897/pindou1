@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>拼豆图纸智能辅助解析与导览系统</title>
-    <link rel="stylesheet" href="./styles.css?v=20260508c" />
+    <link rel="stylesheet" href="./styles.css?v=20260510d" />
   </head>
   <body>
     <div class="app-shell">
@@ -254,7 +254,20 @@
       </main>
     </div>
 
+    <script>
+      (function () {
+        const host = window.location.hostname || "";
+        const isLocalHost = host === "localhost" || host === "127.0.0.1" || host === "::1";
+        const isLanHost =
+          /^10\./.test(host) ||
+          /^192\.168\./.test(host) ||
+          /^172\.(1[6-9]|2\d|3[01])\./.test(host);
+        if (isLocalHost || isLanHost) {
+          window.__PIN_DOU_CLOUD_STATE_URL__ = "https://pindou-rho.vercel.app/api/state";
+        }
+      })();
+    </script>
     <script src="./js/palette-data.js?v=20260508c"></script>
-    <script type="module" src="./js/app.js?v=20260508i"></script>
+    <script type="module" src="./js/app.js?v=20260510f"></script>
   </body>
 </html>

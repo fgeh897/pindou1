@@ -1,0 +1,14 @@
+<view class="page">
+  <view class="card">
+    <view class="title">拼豆图纸助手</view>
+    <view class="subtitle">
+      先完成登录，我们再把每个用户的图纸、色卡和草稿稳定存起来。第一版先把账号和图纸库框架搭好。
+    </view>
+  </view>
+
+  <view class="card">
+    <button class="primary-btn" bindtap="handleLogin" loading="{{loading}}">
+      微信授权登录
+    </button>
+  </view>
+</view>
