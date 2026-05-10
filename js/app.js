@@ -1,4 +1,4 @@
-﻿import { formatRgb, getPerceptualDistance, getReadableTextColor, getRgbDistance, hexToRgb, parseRgbText, rgbToHex } from "./color.js";
+import { formatRgb, getPerceptualDistance, getReadableTextColor, getRgbDistance, hexToRgb, parseRgbText, rgbToHex } from "./color.js";
 import { analyzeGrid, buildStats } from "./parser.js";
 import { generateSmartPlan } from "./plan.js";
 import { getState, patchState, resetAnalysis, setState, subscribe } from "./state.js";
@@ -64,8 +64,6 @@ const focusColorSelect = document.querySelector("#focusColorSelect");
 const focusTopColorBtn = document.querySelector("#focusTopColorBtn");
 const clearFocusColorBtn = document.querySelector("#clearFocusColorBtn");
 const focusColorSummary = document.querySelector("#focusColorSummary");
-// 强制写死，不管有没有那个测试接口界面
-const GLOBAL_OCR_API_BASE_URL = "https://pindou1-1.onrender.com";
 
 const cropCtx = cropCanvas.getContext("2d");
 const viewerCtx = viewerCanvas.getContext("2d");
@@ -162,6 +160,11 @@ let libraryDataExportBtn = null;
 let libraryDataImportBtn = null;
 let libraryDataImportInput = null;
 let libraryDataStatus = null;
+let ocrApiBaseInput = null;
+let ocrApiSaveBtn = null;
+let ocrApiTestBtn = null;
+let ocrApiClearBtn = null;
+let ocrApiStatus = null;
 let batchReplaceModeInput = null;
 let batchReplaceCodeInput = null;
 let batchReplaceCodeList = null;
@@ -194,15 +197,46 @@ let paletteReviewState = {
 
 const STORAGE_KEY = "pindou-assistant-state-v1";
 const SERVER_STATE_URL = window.__PIN_DOU_CLOUD_STATE_URL__ || "/api/state";
-const OCR_API_BASE_URL = (window.__PIN_DOU_OCR_API_BASE_URL__ || "").replace(/\/$/, "");
-const BACKEND_PALETTE_OCR_URL = `${OCR_API_BASE_URL}/api/ocr/palette-card`;
-const BACKEND_MANUAL_SWATCH_OCR_URL = `${OCR_API_BASE_URL}/api/ocr/manual-swatch`;
-const BACKEND_PALETTE_GRID_OCR_URL = `${OCR_API_BASE_URL}/api/ocr/palette-grid`;
+const GLOBAL_OCR_API_BASE_URL = (window.__PIN_DOU_OCR_API_BASE_URL__ || "").replace(/\/$/, "");
 const PROJECT_STATUS_LABELS = {
   todo: "未拼",
   doing: "拼到一半",
   done: "已拼好",
 };
+
+function isLocalLikeHost(hostname = window.location.hostname || "") {
+  return (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "::1" ||
+    /^10\./.test(hostname) ||
+    /^192\.168\./.test(hostname) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(hostname)
+  );
+}
+
+function getDefaultOcrApiBaseUrl() {
+  if (GLOBAL_OCR_API_BASE_URL) {
+    return GLOBAL_OCR_API_BASE_URL;
+  }
+  const { protocol, hostname } = window.location;
+  if (!isLocalLikeHost(hostname)) {
+    return "";
+  }
+  return `${protocol}//${hostname}:8123`;
+}
+
+function normalizeOcrApiBaseUrl(value = "") {
+  return String(value || "").trim().replace(/\/+$/, "");
+}
+
+function getEffectiveOcrApiBaseUrl(state = getState()) {
+  return normalizeOcrApiBaseUrl(state.ocrApiBaseUrl || getDefaultOcrApiBaseUrl());
+}
+
+function buildOcrApiUrl(path, state = getState()) {
+  return `${getEffectiveOcrApiBaseUrl(state)}${path}`;
+}
 
 function createEmptySeedAssist() {
   return {
@@ -391,7 +425,7 @@ function getBackendEngineLabel(engineName) {
 async function requestBackendPaletteOcr(file) {
   const formData = new FormData();
   formData.append("file", file);
-  const response = await fetch(BACKEND_PALETTE_OCR_URL, {
+  const response = await fetch(buildOcrApiUrl("/api/ocr/palette-card"), {
     method: "POST",
     body: formData,
   });
@@ -407,7 +441,7 @@ async function requestBackendPaletteOcr(file) {
 async function requestBackendManualSwatchOcr(file) {
   const formData = new FormData();
   formData.append("file", file);
-  const response = await fetch(BACKEND_MANUAL_SWATCH_OCR_URL, {
+  const response = await fetch(buildOcrApiUrl("/api/ocr/manual-swatch"), {
     method: "POST",
     body: formData,
   });
@@ -431,7 +465,7 @@ async function requestBackendPaletteGridOcr(file, grid) {
   formData.append("y", String(grid.rect.y));
   formData.append("width", String(grid.rect.width));
   formData.append("height", String(grid.rect.height));
-  const response = await fetch(BACKEND_PALETTE_GRID_OCR_URL, {
+  const response = await fetch(buildOcrApiUrl("/api/ocr/palette-grid"), {
     method: "POST",
     body: formData,
   });
@@ -505,6 +539,7 @@ function buildProjectSnapshot(state) {
     paletteReviewSnapshot: buildPaletteReviewSnapshot(),
     currentProjectName: state.currentProjectName || "",
     currentProjectStatus: state.currentProjectStatus || "todo",
+    ocrApiBaseUrl: state.ocrApiBaseUrl || "",
   };
 }
 
@@ -649,6 +684,7 @@ async function buildHydratedStateFromSnapshot(snapshot, extras = {}) {
     currentProjectId: extras.currentProjectId || "",
     currentProjectName: extras.currentProjectName || snapshot.currentProjectName || "",
     currentProjectStatus: extras.currentProjectStatus || snapshot.currentProjectStatus || "todo",
+    ocrApiBaseUrl: snapshot.ocrApiBaseUrl || getState().ocrApiBaseUrl || "",
     analysis: null,
     currentChunkIndex: 0,
   };
@@ -2648,6 +2684,32 @@ function injectEnhancementControls() {
     libraryPanel.appendChild(libraryTools);
   }
 
+  if (libraryPanel && !document.querySelector("#ocrApiBaseInput")) {
+    const ocrTools = document.createElement("div");
+    ocrTools.className = "summary-card";
+    ocrTools.style.marginTop = "12px";
+    ocrTools.innerHTML = `
+      <h3>OCR 后端地址</h3>
+      <p class="plan-text">最省钱方案：网页前端继续走公网，OCR 识别走你电脑本地后端的免费隧道地址。公网版请填 Cloudflare 隧道给你的 <code>https://xxxx.trycloudflare.com</code>；本地版留空就会默认尝试当前电脑的 <code>:8123</code>。</p>
+      <div class="field-grid" style="margin-top:12px;">
+        <label class="field">
+          <span>OCR 公网地址</span>
+          <input id="ocrApiBaseInput" type="text" placeholder="例如 https://abcd-1234.trycloudflare.com" />
+        </label>
+        <div class="field">
+          <span>快速操作</span>
+          <div class="button-row">
+            <button id="ocrApiSaveBtn" type="button">保存地址</button>
+            <button id="ocrApiTestBtn" class="ghost-btn" type="button">测试连通</button>
+            <button id="ocrApiClearBtn" class="ghost-btn" type="button">清空回默认</button>
+          </div>
+        </div>
+      </div>
+      <p id="ocrApiStatus" class="empty-text" style="margin-top:10px;">未设置时：本地版会默认尝试当前电脑的 8123 端口；公网版需要你手动填一次隧道地址。</p>
+    `;
+    libraryPanel.appendChild(ocrTools);
+  }
+
   if (step2Panel && !document.querySelector("#paletteImageInput")) {
     const paletteTools = document.createElement("div");
     paletteTools.className = "summary-card";
@@ -3034,6 +3096,11 @@ function injectEnhancementControls() {
   libraryDataImportBtn = document.querySelector("#libraryDataImportBtn");
   libraryDataImportInput = document.querySelector("#libraryDataImportInput");
   libraryDataStatus = document.querySelector("#libraryDataStatus");
+  ocrApiBaseInput = document.querySelector("#ocrApiBaseInput");
+  ocrApiSaveBtn = document.querySelector("#ocrApiSaveBtn");
+  ocrApiTestBtn = document.querySelector("#ocrApiTestBtn");
+  ocrApiClearBtn = document.querySelector("#ocrApiClearBtn");
+  ocrApiStatus = document.querySelector("#ocrApiStatus");
   batchReplaceModeInput = document.querySelector("#batchReplaceModeInput");
   batchReplaceCodeInput = document.querySelector("#batchReplaceCodeInput");
   batchReplaceCodeList = document.querySelector("#batchReplaceCodeList");
@@ -3098,6 +3165,7 @@ function renderLibraryPanel() {
   if (libraryProjectStatusSelect && document.activeElement !== libraryProjectStatusSelect) {
     libraryProjectStatusSelect.value = currentMeta.status || "todo";
   }
+  renderOcrApiConfig();
   if (!libraryProjectList) {
     return;
   }
@@ -3385,6 +3453,66 @@ function setLibraryDataStatus(message, isError = false) {
   }
   libraryDataStatus.textContent = message;
   libraryDataStatus.style.color = isError ? "#c13d3d" : "#745f4b";
+}
+
+function setOcrApiStatus(message, isError = false) {
+  if (!ocrApiStatus) {
+    return;
+  }
+  ocrApiStatus.textContent = message;
+  ocrApiStatus.style.color = isError ? "#c13d3d" : "#745f4b";
+}
+
+function renderOcrApiConfig() {
+  if (!ocrApiBaseInput) {
+    return;
+  }
+  const state = getState();
+  if (document.activeElement !== ocrApiBaseInput) {
+    ocrApiBaseInput.value = state.ocrApiBaseUrl || "";
+  }
+  const effectiveBase = getEffectiveOcrApiBaseUrl(state);
+  if (effectiveBase) {
+    if (state.ocrApiBaseUrl) {
+      setOcrApiStatus(`当前已保存 OCR 地址：${effectiveBase}`);
+    } else {
+      setOcrApiStatus(`当前使用默认 OCR 地址：${effectiveBase}`);
+    }
+    return;
+  }
+  setOcrApiStatus("当前还没有 OCR 地址。公网版请先填 Cloudflare 隧道地址；本地版留空会默认尝试当前电脑的 8123 端口。");
+}
+
+function saveOcrApiBaseUrlFromInput() {
+  const normalized = normalizeOcrApiBaseUrl(ocrApiBaseInput?.value || "");
+  patchState({ ocrApiBaseUrl: normalized });
+  if (normalized) {
+    setOcrApiStatus(`已保存 OCR 地址：${normalized}`);
+  } else {
+    renderOcrApiConfig();
+  }
+}
+
+async function testOcrApiConnection() {
+  const baseUrl = getEffectiveOcrApiBaseUrl();
+  if (!baseUrl) {
+    setOcrApiStatus("还没有可测试的 OCR 地址。请先填写 Cloudflare 隧道地址。", true);
+    return;
+  }
+  setOcrApiStatus(`正在测试 OCR 地址：${baseUrl} ...`);
+  try {
+    const response = await fetch(`${baseUrl}/api/health`, { cache: "no-store" });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error(payload?.detail || payload?.error || `HTTP ${response.status}`);
+    }
+    if (!payload?.ocrReady) {
+      throw new Error(payload?.ocrError || "OCR 引擎未就绪");
+    }
+    setOcrApiStatus(`OCR 后端可用：${baseUrl}`);
+  } catch (error) {
+    setOcrApiStatus(`OCR 后端测试失败：${error?.message || error}`, true);
+  }
 }
 
 function medianChannel(values) {
@@ -6818,6 +6946,13 @@ function bindEvents() {
   importProjectBtn?.addEventListener("click", () => libraryImageInput?.click());
   libraryDataExportBtn?.addEventListener("click", downloadLibraryBundle);
   libraryDataImportBtn?.addEventListener("click", () => libraryDataImportInput?.click());
+  ocrApiSaveBtn?.addEventListener("click", saveOcrApiBaseUrlFromInput);
+  ocrApiTestBtn?.addEventListener("click", testOcrApiConnection);
+  ocrApiClearBtn?.addEventListener("click", () => {
+    patchState({ ocrApiBaseUrl: "" });
+    renderOcrApiConfig();
+  });
+  ocrApiBaseInput?.addEventListener("change", saveOcrApiBaseUrlFromInput);
   libraryDataImportInput?.addEventListener("change", async (event) => {
     await importLibraryBundleFromFile(event.target.files?.[0]);
     event.target.value = "";
