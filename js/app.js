@@ -64,8 +64,7 @@ const focusColorSelect = document.querySelector("#focusColorSelect");
 const focusTopColorBtn = document.querySelector("#focusTopColorBtn");
 const clearFocusColorBtn = document.querySelector("#clearFocusColorBtn");
 const focusColorSummary = document.querySelector("#focusColorSummary");
-// 强制写死，不管有没有那个测试接口界面
-const GLOBAL_OCR_API_BASE_URL = "https://pindou1-1.onrender.com";
+// OCR 后端地址可通过 window.__PIN_DOU_OCR_API_BASE_URL__ 配置，见 DEPLOY_BACKEND_RENDER.md
 
 const cropCtx = cropCanvas.getContext("2d");
 const viewerCtx = viewerCanvas.getContext("2d");
@@ -194,7 +193,7 @@ let paletteReviewState = {
 
 const STORAGE_KEY = "pindou-assistant-state-v1";
 const SERVER_STATE_URL = window.__PIN_DOU_CLOUD_STATE_URL__ || "/api/state";
-const OCR_API_BASE_URL = "https://pindou1-1.onrender.com";
+const OCR_API_BASE_URL = window.__PIN_DOU_OCR_API_BASE_URL__ || "https://pindou1-1.onrender.com";
 const BACKEND_PALETTE_OCR_URL = `${OCR_API_BASE_URL}/api/ocr/palette-card`;
 const BACKEND_MANUAL_SWATCH_OCR_URL = `${OCR_API_BASE_URL}/api/ocr/manual-swatch`;
 const BACKEND_PALETTE_GRID_OCR_URL = `${OCR_API_BASE_URL}/api/ocr/palette-grid`;
@@ -372,7 +371,7 @@ function openImagePicker() {
 }
 
 function canUseBackendOcr() {
-  return window.location.protocol === "http:" || window.location.protocol === "https:";
+  return true;
 }
 
 function getBackendEngineLabel(engineName) {
