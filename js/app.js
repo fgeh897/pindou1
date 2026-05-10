@@ -64,6 +64,8 @@ const focusColorSelect = document.querySelector("#focusColorSelect");
 const focusTopColorBtn = document.querySelector("#focusTopColorBtn");
 const clearFocusColorBtn = document.querySelector("#clearFocusColorBtn");
 const focusColorSummary = document.querySelector("#focusColorSummary");
+// 强制写死，不管有没有那个测试接口界面
+const GLOBAL_OCR_API_BASE_URL = "https://pindou1-1.onrender.com";
 
 const cropCtx = cropCanvas.getContext("2d");
 const viewerCtx = viewerCanvas.getContext("2d");
