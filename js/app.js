@@ -76,6 +76,7 @@ let paletteExpanded = false;
 let paletteImageInput = null;
 let extractLegendBtn = null;
 let uploadPaletteImageBtn = null;
+let localOcrBtn = null;
 let paletteReviewCanvas = null;
 let paletteReviewCtx = null;
 let paletteReviewStatus = null;
@@ -2790,7 +2791,19 @@ function injectEnhancementControls() {
       </div>
     `;
     step2Panel.appendChild(paletteTools);
-  }
+
+    // Inject local OCR button next to existing buttons
+    const ocrBtnRow = paletteTools.querySelector('.button-row');
+    if (ocrBtnRow && !document.querySelector('#localOcrBtn')) {
+      const localBtn = document.createElement('button');
+      localBtn.id = 'localOcrBtn';
+      localBtn.className = 'ghost-btn';
+      localBtn.type = 'button';
+      localBtn.textContent = '本地离线识别';
+      localBtn.title = '跳过 Render 后端，直接使用浏览器本地 OCR 识别色号';
+      ocrBtnRow.appendChild(localBtn);
+    }
+  }
 
   if (step3Panel && !document.querySelector("#sampleOverlayToggle")) {
     const sampleTools = document.createElement("div");
@@ -6823,6 +6836,50 @@ function bindTap(element, handler) {
     { passive: false },
   );
 }
+
+// Skip backend, use local OCR only
+async function extractPaletteWithLocalOcr() {
+  paletteImageInput?.click();
+  // Store flag so the change handler knows to skip backend
+  window.__PINDOU_LOCAL_OCR_ONLY__ = true;
+}
+
+// In the existing file change handler, check the flag
+const origExtractFromUploadedImage = extractPaletteFromUploadedImage;
+extractPaletteFromUploadedImage = async function(file) {
+  if (!file) return;
+  if (window.__PINDOU_LOCAL_OCR_ONLY__) {
+    window.__PINDOU_LOCAL_OCR_ONLY__ = false;
+    // Skip backend, go directly to local OCR
+    const objectUrl = URL.createObjectURL(file);
+    try {
+      const image = await loadImageElement(objectUrl);
+      const canvas = createImageBitmapCanvas(image);
+      setExtractionStatus("本地离线识别中...", false);
+      const detections = analyzePaletteCardCanvas(canvas);
+      const recognizedEntries = getRecognizedEntriesFromDetections(detections);
+      setPaletteReviewData(canvas, file.name || "本图颜色卡", detections);
+      renderPaletteReview();
+      if (!detections.length) {
+        setExtractionStatus("本地识别：没有找到色块，请换一张更清晰的截图。", true);
+        return;
+      }
+      if (recognizedEntries.length) {
+        applyImportedPalette(recognizedEntries, file.name || "本图颜色卡");
+        setExtractionStatus("本地识别完成：已识别 " + recognizedEntries.length + " 个色号。");
+      } else {
+        setExtractionStatus("本地识别：找到了色块但文字没识别准，请手动修正。", true);
+      }
+    } catch (err) {
+      console.error("Local OCR error:", err);
+      setExtractionStatus("本地识别出错：" + (err.message || String(err)), true);
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
+    return;
+  }
+  return origExtractFromUploadedImage(file);
+};
 
 function bindEvents() {
   for (const button of tabBtns) {
