@@ -2213,6 +2213,7 @@ const STORAGE_KEY = "pindou-assistant-state-v1";
 const OCR_API_BASE_URL = window.__PIN_DOU_OCR_API_BASE_URL__ || "https://pindou1-1.onrender.com";
 const BACKEND_PALETTE_OCR_URL = `${OCR_API_BASE_URL}/api/ocr/palette-card`;
 const BACKEND_MANUAL_SWATCH_OCR_URL = `${OCR_API_BASE_URL}/api/ocr/manual-swatch`;
+
 function ensureCanvasSize(canvas, width, height) {
   const dpr = window.devicePixelRatio || 1;
   canvas.width = Math.floor(width * dpr);
@@ -2319,31 +2320,16 @@ function getBackendEngineLabel(engineName) {
 }
 
 async function requestBackendPaletteOcr(file) {
-  const statusEl = document.querySelector("#paletteExtractStatus");
-  statusEl && (statusEl.textContent = "正在调用后端 OCR，请稍候（冷启动可能需要 20-30 秒）...");
-  statusEl && (statusEl.style.color = "#745f4b");
-
   const formData = new FormData();
   formData.append("file", file);
-
-  let response;
-  try {
-    response = await fetch(BACKEND_PALETTE_OCR_URL, {
-      method: "POST",
-      body: formData,
-    });
-  } catch (networkErr) {
-    const msg = "无法连接到 OCR 后端 (" + BACKEND_PALETTE_OCR_URL + "): " + (networkErr.message || String(networkErr));
-    statusEl && (statusEl.textContent = msg);
-    statusEl && (statusEl.style.color = "#c13d3d");
-    throw new Error(msg);
-  }
+  const response = await fetch(BACKEND_PALETTE_OCR_URL, {
+    method: "POST",
+    body: formData,
+  });
 
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     const message = payload?.ocrError || payload?.detail || `OCR request failed (${response.status})`;
-    statusEl && (statusEl.textContent = "OCR 请求失败: " + message);
-    statusEl && (statusEl.style.color = "#c13d3d");
     throw new Error(message);
   }
   return payload;
@@ -3937,21 +3923,6 @@ function injectEnhancementControls() {
       </div>
       <input id="paletteImageInput" type="file" accept="image/*" style="display:none;" />
       <div id="paletteExtractStatus" class="empty-text" style="margin-top:10px;">寤鸿鍏堟湁鑹插彿鍒楄〃锛屽啀涓婁紶棰滆壊鍗℃埅鍥炬牎鍑嗘湰鍥鹃鑹层€?/div>
-      <div class="summary-card" style="margin-top:12px; padding:12px; background:#fff9f0; border:1px solid #e0d5c0;">
-        <h3 style="margin-top:0;">后端 OCR 设置</h3>
-        <p class="plan-text">如果 OCR 无法调用，请检查后端地址是否正确。默认使用 Render 后端。</p>
-        <div class="field-grid" style="margin-top:8px;">
-          <label class="field">
-            <span>OCR 后端地址</span>
-            <input id="ocrApiBaseUrlInput" type="text" placeholder="https://pindou1-1.onrender.com" style="width:100%;" />
-          </label>
-          <div class="field" style="display:flex;align-items:flex-end;">
-            <button id="ocrApiSaveBtn" type="button" style="margin-right:8px;">保存地址</button>
-            <button id="ocrApiTestBtn" class="ghost-btn" type="button">测试连接</button>
-          </div>
-        </div>
-        <p id="ocrApiStatus" class="empty-text" style="margin-top:8px;">设置后点击"测试连接"验证后端是否可用。</p>
-      </div>
       <div class="summary-card" style="margin-top:12px; padding:12px;">
         <h3>璇嗗埆鏁堟灉棰勮</h3>
         <p class="plan-text">鍏堢湅宸︿晶鏁村浘妗嗛€夌粨鏋滐紝鍐嶄粠鍙充晶鍒楄〃鐐归€夊崟涓壊鍧椼€傜豢鑹?= 宸茶瘑鍒紝绾㈣壊 = 寰呰ˉ锛岄粍鑹茶櫄绾?= 浣犳鍦ㄦ墜鍔ㄦ閫夌殑鍖哄煙銆傝嫢涓や釜鑹插潡琚瘑鍒垚涓€涓紝鍏堝垹鎺夎妗嗭紝鍐嶉噸鏂版嫋灏忔鎷嗗垎銆傛墜鍔ㄦ閫夐暱鏉¤壊鍗℃椂锛岀郴缁熶細灏介噺鍙粠鐪熸鐨勮壊鍧楀尯鍙栬壊锛屽拷鐣ュ彸渚ф暟閲忓尯銆?/p>
@@ -6811,63 +6782,7 @@ function bindEvents() {
   });
 }
 
-
-function initOcrSettings() {
-  const input = document.querySelector("#ocrApiBaseUrlInput");
-  const saveBtn = document.querySelector("#ocrApiSaveBtn");
-  const testBtn = document.querySelector("#ocrApiTestBtn");
-  const status = document.querySelector("#ocrApiStatus");
-
-  if (!input || !saveBtn || !testBtn || !status) return;
-
-  const saved = localStorage.getItem("pindou-ocr-api-base-url");
-  if (saved) {
-    input.value = saved;
-    window.__PIN_DOU_OCR_API_BASE_URL__ = saved;
-  } else {
-    input.placeholder = "https://pindou1-1.onrender.com";
-  }
-
-  function setStatus(msg, isError) {
-    status.textContent = msg;
-    status.style.color = isError ? "#c13d3d" : "#2f6c73";
-  }
-
-  saveBtn.addEventListener("click", () => {
-    const url = input.value.trim();
-    if (!url) {
-      localStorage.removeItem("pindou-ocr-api-base-url");
-      window.__PIN_DOU_OCR_API_BASE_URL__ = undefined;
-      setStatus("已清除自定义地址，将使用默认 Render 后端。", false);
-    } else {
-      localStorage.setItem("pindou-ocr-api-base-url", url);
-      window.__PIN_DOU_OCR_API_BASE_URL__ = url;
-      setStatus("地址已保存: " + url, false);
-    }
-  });
-
-  testBtn.addEventListener("click", async () => {
-    const url = input.value.trim() || "https://pindou1-1.onrender.com";
-    setStatus("正在测试连接 " + url + "/api/health ...", false);
-    try {
-      const resp = await fetch(url + "/api/health", { method: "GET" });
-      const data = await resp.json().catch(() => ({}));
-      if (data.ok && data.ocrReady) {
-        setStatus("连接成功! OCR 引擎: " + (data.ocrError ? "就绪但有警告" : "就绪"), false);
-      } else if (data.ok) {
-        setStatus("服务器可达但 OCR 未就绪: " + (data.ocrError || "未知原因"), true);
-      } else {
-        setStatus("服务器返回异常: " + JSON.stringify(data), true);
-      }
-    } catch (err) {
-      setStatus("连接失败: " + (err.message || String(err)) + "。请检查地址是否正确，以及后端是否已启动。", true);
-    }
-  });
-}
-
 injectEnhancementControls();
-initOcrSettings();
-patchOcrRequestWithErrorFeedback();
 subscribe((state) => {
   rerender(state);
   saveStateToStorage();

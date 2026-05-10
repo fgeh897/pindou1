@@ -64,7 +64,8 @@ const focusColorSelect = document.querySelector("#focusColorSelect");
 const focusTopColorBtn = document.querySelector("#focusTopColorBtn");
 const clearFocusColorBtn = document.querySelector("#clearFocusColorBtn");
 const focusColorSummary = document.querySelector("#focusColorSummary");
-// OCR 后端地址可通过 window.__PIN_DOU_OCR_API_BASE_URL__ 配置，见 DEPLOY_BACKEND_RENDER.md
+	// 后端地址默认 Render，可通过 window.__PIN_DOU_OCR_API_BASE_URL__ 覆盖
+	// 见 DEPLOY_BACKEND_RENDER.md
 
 const cropCtx = cropCanvas.getContext("2d");
 const viewerCtx = viewerCanvas.getContext("2d");
@@ -193,7 +194,7 @@ let paletteReviewState = {
 
 const STORAGE_KEY = "pindou-assistant-state-v1";
 const SERVER_STATE_URL = window.__PIN_DOU_CLOUD_STATE_URL__ || "/api/state";
-const OCR_API_BASE_URL = window.__PIN_DOU_OCR_API_BASE_URL__ || "https://pindou1-1.onrender.com";
+	const OCR_API_BASE_URL = window.__PIN_DOU_OCR_API_BASE_URL__ || "https://pindou1-1.onrender.com";
 const BACKEND_PALETTE_OCR_URL = `${OCR_API_BASE_URL}/api/ocr/palette-card`;
 const BACKEND_MANUAL_SWATCH_OCR_URL = `${OCR_API_BASE_URL}/api/ocr/manual-swatch`;
 const BACKEND_PALETTE_GRID_OCR_URL = `${OCR_API_BASE_URL}/api/ocr/palette-grid`;
@@ -388,34 +389,19 @@ function getBackendEngineLabel(engineName) {
 }
 
 async function requestBackendPaletteOcr(file) {
-  const statusEl = document.querySelector("#paletteExtractStatus");
-  statusEl && (statusEl.textContent = "正在调用后端 OCR，请稍候（冷启动可能需要 20-30 秒）...");
-  statusEl && (statusEl.style.color = "#745f4b");
+  const formData = new FormData();
+  formData.append("file", file);
+  const response = await fetch(BACKEND_PALETTE_OCR_URL, {
+    method: "POST",
+    body: formData,
+  });
 
-  const formData = new FormData();
-  formData.append("file", file);
-
-  let response;
-  try {
-    response = await fetch(BACKEND_PALETTE_OCR_URL, {
-      method: "POST",
-      body: formData,
-    });
-  } catch (networkErr) {
-    const msg = "无法连接到 OCR 后端 (" + BACKEND_PALETTE_OCR_URL + "): " + (networkErr.message || String(networkErr));
-    statusEl && (statusEl.textContent = msg);
-    statusEl && (statusEl.style.color = "#c13d3d");
-    throw new Error(msg);
-  }
-
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const message = payload?.ocrError || payload?.detail || `OCR request failed (${response.status}`);
-    statusEl && (statusEl.textContent = "OCR 请求失败: " + message);
-    statusEl && (statusEl.style.color = "#c13d3d");
-    throw new Error(message);
-  }
-  return payload;
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const message = payload?.ocrError || payload?.detail || `OCR request failed (${response.status})`;
+    throw new Error(message);
+  }
+  return payload;
 }
 
 async function requestBackendManualSwatchOcr(file) {
@@ -2687,21 +2673,6 @@ function injectEnhancementControls() {
       </div>
       <input id="paletteImageInput" type="file" accept="image/*" style="display:none;" />
       <div id="paletteExtractStatus" class="empty-text" style="margin-top:10px;">建议先有色号列表，再上传颜色卡截图校准本图颜色。</div>
-      <div class="summary-card" style="margin-top:12px; padding:12px; background:#fff9f0; border:1px solid #e0d5c0;">
-        <h3 style="margin-top:0;">后端 OCR 设置</h3>
-        <p class="plan-text">如果 OCR 无法调用，请检查后端地址是否正确。默认使用 Render 后端。</p>
-        <div class="field-grid" style="margin-top:8px;">
-          <label class="field">
-            <span>OCR 后端地址</span>
-            <input id="ocrApiBaseUrlInput" type="text" placeholder="https://pindou1-1.onrender.com" style="width:100%;" />
-          </label>
-          <div class="field" style="display:flex;align-items:flex-end;">
-            <button id="ocrApiSaveBtn" type="button" style="margin-right:8px;">保存地址</button>
-            <button id="ocrApiTestBtn" class="ghost-btn" type="button">测试连接</button>
-          </div>
-        </div>
-        <p id="ocrApiStatus" class="empty-text" style="margin-top:8px;">设置后点击"测试连接"验证后端是否可用。</p>
-      </div>
       <div class="summary-card" style="margin-top:12px; padding:12px;">
         <h3>识别效果预览</h3>
         <p class="plan-text">先看左侧整图框选结果，再从右侧列表点选单个色块。绿色 = 已识别，红色 = 待补，黄色虚线 = 你正在手动框选的区域。若两个色块被识别成一个，先删掉误框，再重新拖小框拆分。手动框选长条色卡时，系统会尽量只从真正的色块区取色，忽略右侧数量区。</p>
@@ -7275,61 +7246,7 @@ function bindEvents() {
   });
 }
 
-
-function initOcrSettings() {
-  const input = document.querySelector("#ocrApiBaseUrlInput");
-  const saveBtn = document.querySelector("#ocrApiSaveBtn");
-  const testBtn = document.querySelector("#ocrApiTestBtn");
-  const status = document.querySelector("#ocrApiStatus");
-
-  if (!input || !saveBtn || !testBtn || !status) return;
-
-  const saved = localStorage.getItem("pindou-ocr-api-base-url");
-  if (saved) {
-    input.value = saved;
-    window.__PIN_DOU_OCR_API_BASE_URL__ = saved;
-  } else {
-    input.placeholder = "https://pindou1-1.onrender.com";
-  }
-
-  function setStatus(msg, isError) {
-    status.textContent = msg;
-    status.style.color = isError ? "#c13d3d" : "#2f6c73";
-  }
-
-  saveBtn.addEventListener("click", () => {
-    const url = input.value.trim();
-    if (!url) {
-      localStorage.removeItem("pindou-ocr-api-base-url");
-      window.__PIN_DOU_OCR_API_BASE_URL__ = undefined;
-      setStatus("已清除自定义地址，将使用默认 Render 后端。", false);
-    } else {
-      localStorage.setItem("pindou-ocr-api-base-url", url);
-      window.__PIN_DOU_OCR_API_BASE_URL__ = url;
-      setStatus("地址已保存: " + url, false);
-    }
-  });
-
-  testBtn.addEventListener("click", async () => {
-    const url = input.value.trim() || "https://pindou1-1.onrender.com";
-    setStatus("正在测试连接 " + url + "/api/health ...", false);
-    try {
-      const resp = await fetch(url + "/api/health", { method: "GET" });
-      const data = await resp.json().catch(() => ({}));
-      if (data.ok && data.ocrReady) {
-        setStatus("连接成功! OCR 引擎: " + (data.ocrError ? "就绪但有警告" : "就绪"), false);
-      } else if (data.ok) {
-        setStatus("服务器可达但 OCR 未就绪: " + (data.ocrError || "未知原因"), true);
-      } else {
-        setStatus("服务器返回异常: " + JSON.stringify(data), true);
-      }
-    } catch (err) {
-      setStatus("连接失败: " + (err.message || String(err)) + "。请检查地址是否正确，以及后端是否已启动。", true);
-    }
-  });
-}
 injectEnhancementControls();
-initOcrSettings();
 subscribe((state) => {
   rerender(state);
   saveStateToStorage();
