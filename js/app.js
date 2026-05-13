@@ -390,37 +390,90 @@ function getBackendEngineLabel(engineName) {
 }
 
 
-async function resizeImageForOcr(file) {
-  const MAX_SIZE = 1600;
-  const MAX_BYTES = 200 * 1024;
-  if (file.size <= MAX_BYTES) return file;
-  return new Promise((resolve) => {
-    const img = new Image();
-    const url = URL.createObjectURL(file);
-    img.onload = () => {
-      URL.revokeObjectURL(url);
-      let w = img.naturalWidth, h = img.naturalHeight;
-      if (w > MAX_SIZE || h > MAX_SIZE) {
-        const ratio = Math.min(MAX_SIZE / w, MAX_SIZE / h);
-        w = Math.round(w * ratio); h = Math.round(h * ratio);
-      }
-      const canvas = document.createElement('canvas');
-      canvas.width = w; canvas.height = h;
-      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-      canvas.toBlob((blob) => {
-        resolve(new File([blob], file.name || 'ocr.jpg', { type: 'image/jpeg' }));
-      }, 'image/jpeg', 0.85);
-    };
-    img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
-    img.src = url;
+function buildOcrUploadFileName(fileName, fallbackBase = "ocr-upload") {
+  const trimmed = String(fileName || "").trim();
+  const baseName = (trimmed || fallbackBase).replace(/\.[^.]+$/, "");
+  return `${baseName || fallbackBase}.jpg`;
+}
+
+function calculateOcrResizeSize(width, height, options = {}) {
+  const maxEdge = Number(options.maxEdge) > 0 ? Number(options.maxEdge) : 2200;
+  const maxPixels = Number(options.maxPixels) > 0 ? Number(options.maxPixels) : 4200000;
+  const safeWidth = Math.max(1, Math.round(width));
+  const safeHeight = Math.max(1, Math.round(height));
+  const longestEdge = Math.max(safeWidth, safeHeight);
+  const totalPixels = safeWidth * safeHeight;
+  const edgeScale = longestEdge > maxEdge ? maxEdge / longestEdge : 1;
+  const pixelScale = totalPixels > maxPixels ? Math.sqrt(maxPixels / totalPixels) : 1;
+  const scale = Math.min(1, edgeScale, pixelScale);
+  return {
+    width: Math.max(1, Math.round(safeWidth * scale)),
+    height: Math.max(1, Math.round(safeHeight * scale)),
+  };
+}
+
+function canvasToJpegFile(canvas, fileName, quality = 0.84) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) {
+          reject(new Error("Failed to encode OCR image."));
+          return;
+        }
+        resolve(new File([blob], buildOcrUploadFileName(fileName), { type: "image/jpeg" }));
+      },
+      "image/jpeg",
+      quality,
+    );
   });
 }
 
+async function buildOcrUploadFromCanvas(sourceCanvas, fileName, options = {}) {
+  if (!sourceCanvas?.width || !sourceCanvas?.height) {
+    throw new Error("OCR source canvas unavailable.");
+  }
+
+  const rawRect = options.cropRect || { x: 0, y: 0, width: sourceCanvas.width, height: sourceCanvas.height };
+  const cropRect = {
+    x: Math.max(0, Math.min(sourceCanvas.width - 1, Math.round(rawRect.x || 0))),
+    y: Math.max(0, Math.min(sourceCanvas.height - 1, Math.round(rawRect.y || 0))),
+    width: Math.max(1, Math.min(sourceCanvas.width, Math.round(rawRect.width || sourceCanvas.width))),
+    height: Math.max(1, Math.min(sourceCanvas.height, Math.round(rawRect.height || sourceCanvas.height))),
+  };
+  cropRect.width = Math.min(cropRect.width, sourceCanvas.width - cropRect.x);
+  cropRect.height = Math.min(cropRect.height, sourceCanvas.height - cropRect.y);
+
+  const targetSize = calculateOcrResizeSize(cropRect.width, cropRect.height, options);
+  const canvas = document.createElement("canvas");
+  canvas.width = targetSize.width;
+  canvas.height = targetSize.height;
+  const ctx = canvas.getContext("2d", { alpha: false });
+  ctx.drawImage(
+    sourceCanvas,
+    cropRect.x,
+    cropRect.y,
+    cropRect.width,
+    cropRect.height,
+    0,
+    0,
+    targetSize.width,
+    targetSize.height,
+  );
+
+  return {
+    file: await canvasToJpegFile(canvas, fileName, options.quality ?? 0.84),
+    rect: {
+      x: 0,
+      y: 0,
+      width: targetSize.width,
+      height: targetSize.height,
+    },
+  };
+}
+
 async function requestBackendPaletteOcr(file) {
-  const resized = await resizeImageForOcr(file);
-  console.log("[OCR] Original:", file.size, "bytes -> Resized:", resized.size, "bytes");
   const formData = new FormData();
-  formData.append("file", resized);
+  formData.append("file", file);
   const response = await fetch(BACKEND_PALETTE_OCR_URL, {
     method: "POST",
     body: formData,
@@ -5594,14 +5647,15 @@ async function extractPaletteFromUploadedImage(file) {
   const objectUrl = URL.createObjectURL(file);
   try {
     const image = await loadImageElement(objectUrl);
-    const canvas = createImageBitmapCanvas(image);
+    const canvas = createImageBitmapCanvas(image);
 
-    if (canUseBackendOcr()) {
-      try {
-        const backendResult = await requestBackendPaletteOcr(file);
-        const detections = backendResult.detections || [];
-        const recognizedEntries = backendResult.recognizedEntries || [];
-        const backendLabel = getBackendEngineLabel(backendResult.engine);
+    if (canUseBackendOcr()) {
+      try {
+        const ocrUpload = await buildOcrUploadFromCanvas(canvas, file.name || "palette-card");
+        const backendResult = await requestBackendPaletteOcr(ocrUpload.file);
+        const detections = backendResult.detections || [];
+        const recognizedEntries = backendResult.recognizedEntries || [];
+        const backendLabel = getBackendEngineLabel(backendResult.engine);
         setPaletteReviewData(canvas, file.name || "本图颜色卡", detections);
         renderPaletteReview();
 
@@ -6180,8 +6234,14 @@ async function applyPaletteGridRecognition() {
     let result = null;
     if (canUseBackendOcr()) {
       try {
-        const file = await canvasToPngFile(paletteReviewState.sourceCanvas, "palette-grid.png");
-        result = await requestBackendPaletteGridOcr(file, frozenGrid);
+        const ocrUpload = await buildOcrUploadFromCanvas(paletteReviewState.sourceCanvas, "palette-grid", {
+          cropRect: frozenGrid.rect,
+          maxPixels: 3200000,
+        });
+        result = await requestBackendPaletteGridOcr(ocrUpload.file, {
+          ...frozenGrid,
+          rect: ocrUpload.rect,
+        });
         setPaletteGridStatus(`后端网格 OCR 已完成：检测 ${result.detections?.length || 0} 格，识别到 ${result.recognizedEntries?.length || 0} 个色号。`);
       } catch (error) {
         console.warn("Backend grid OCR unavailable, fallback to local grid review:", error);

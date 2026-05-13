@@ -4,6 +4,7 @@ import argparse
 import importlib
 import io
 import json
+import math
 import os
 import re
 import tempfile
@@ -11,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageOps
 
 ROOT = Path(__file__).resolve().parent
 DEPLOYMENT_MODE = os.environ.get("PINDOU_DEPLOYMENT_MODE", "full").strip().lower()
@@ -54,6 +55,8 @@ OCR_CODE_RE = re.compile(r"([A-Z])\s*([0-9]{1,2})")
 OCR_ENGINE: Any = None
 OCR_ERROR: str | None = None
 OCR_ENGINE_NAME = "unavailable"
+MAX_OCR_IMAGE_EDGE = max(1200, int(os.environ.get("PINDOU_OCR_MAX_EDGE", "2400")))
+MAX_OCR_IMAGE_PIXELS = max(1_000_000, int(os.environ.get("PINDOU_OCR_MAX_PIXELS", "5000000")))
 
 
 def read_persisted_state() -> dict[str, Any]:
@@ -126,7 +129,41 @@ def get_ocr_engine() -> Any:
 
 
 def pil_to_array(image: Image.Image) -> np.ndarray:
-    return np.asarray(image.convert("RGB"))
+    if image.mode != "RGB":
+        image = image.convert("RGB")
+    return np.asarray(image)
+
+
+def load_rgb_image(content: bytes) -> tuple[Image.Image, float]:
+    if not content:
+        raise ValueError("empty file")
+
+    try:
+        image = Image.open(io.BytesIO(content))
+        image = ImageOps.exif_transpose(image)
+        if image.mode != "RGB":
+            image = image.convert("RGB")
+    except Exception as exc:  # pragma: no cover
+        raise ValueError(f"invalid image: {exc}") from exc
+
+    width, height = image.size
+    longest_edge = max(width, height)
+    total_pixels = width * height
+    edge_scale = min(1.0, MAX_OCR_IMAGE_EDGE / longest_edge) if longest_edge else 1.0
+    pixel_scale = min(1.0, math.sqrt(MAX_OCR_IMAGE_PIXELS / total_pixels)) if total_pixels else 1.0
+    scale = min(edge_scale, pixel_scale)
+
+    if scale >= 0.999:
+        return image, 1.0
+
+    resized = image.resize(
+        (
+            max(1, int(round(width * scale))),
+            max(1, int(round(height * scale))),
+        ),
+        Image.Resampling.LANCZOS,
+    )
+    return resized, scale
 
 
 def is_swatch_pixel(rgb: np.ndarray) -> np.ndarray:
@@ -374,7 +411,7 @@ def extract_ocr_lines(image: Image.Image) -> list[dict[str, Any]]:
         return []
 
     engine_name, engine = engine_pack
-    source = np.asarray(image.convert("RGB"))
+    source = pil_to_array(image)
     lines: list[dict[str, Any]] = []
 
     if engine_name == "rapidocr":
@@ -426,12 +463,13 @@ def recognize_box_code(image: Image.Image, box: dict[str, int]) -> tuple[str, fl
         return "", 0.0
 
     region = crop_text_region(image, box)
+    region_array = pil_to_array(region)
     engine_name, engine = engine_pack
     if engine_name == "rapidocr":
-        result, _ = engine(np.asarray(region))
+        result, _ = engine(region_array)
         extracted = extract_texts_from_rapid_result(result)
     else:
-        result = engine.ocr(np.asarray(region), cls=False)
+        result = engine.ocr(region_array, cls=False)
         extracted = extract_texts_from_paddle_result(result)
     best_code = ""
     best_score = 0.0
@@ -834,13 +872,10 @@ def build_app() -> Any:
     @app.post("/api/ocr/palette-card")
     async def ocr_palette_card(file: UploadFile = File(...)) -> Any:
         content = await file.read()
-        if not content:
-            raise HTTPException(status_code=400, detail="empty file")
-
         try:
-            image = Image.open(io.BytesIO(content)).convert("RGB")
-        except Exception as exc:  # pragma: no cover
-            raise HTTPException(status_code=400, detail=f"invalid image: {exc}") from exc
+            image, _ = load_rgb_image(content)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         result = analyze_palette_card(image)
         if not result["recognizedEntries"] and result["ocrError"]:
@@ -850,13 +885,10 @@ def build_app() -> Any:
     @app.post("/api/ocr/manual-swatch")
     async def ocr_manual_swatch(file: UploadFile = File(...)) -> Any:
         content = await file.read()
-        if not content:
-            raise HTTPException(status_code=400, detail="empty file")
-
         try:
-            image = Image.open(io.BytesIO(content)).convert("RGB")
-        except Exception as exc:  # pragma: no cover
-            raise HTTPException(status_code=400, detail=f"invalid image: {exc}") from exc
+            image, _ = load_rgb_image(content)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         result = analyze_manual_swatch(image)
         if not result["code"] and result["ocrError"]:
@@ -876,21 +908,18 @@ def build_app() -> Any:
         height: float = Form(...),
     ) -> Any:
         content = await file.read()
-        if not content:
-            raise HTTPException(status_code=400, detail="empty file")
-
         try:
-            image = Image.open(io.BytesIO(content)).convert("RGB")
-        except Exception as exc:  # pragma: no cover
-            raise HTTPException(status_code=400, detail=f"invalid image: {exc}") from exc
+            image, scale = load_rgb_image(content)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         result = analyze_palette_grid(
             image,
             {
-                "x": int(round(x)),
-                "y": int(round(y)),
-                "width": int(round(width)),
-                "height": int(round(height)),
+                "x": int(round(x * scale)),
+                "y": int(round(y * scale)),
+                "width": int(round(width * scale)),
+                "height": int(round(height * scale)),
             },
             rows,
             cols,

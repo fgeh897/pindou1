@@ -1,4 +1,3 @@
-import io
 import os
 from typing import Any
 
@@ -8,8 +7,6 @@ os.environ.setdefault("PINDOU_OCR_ENGINE", "rapidocr")
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from PIL import Image
-
 import pindou_server as server
 
 
@@ -23,14 +20,11 @@ app.add_middleware(
 )
 
 
-def load_rgb_image(content: bytes) -> Image.Image:
-    if not content:
-        raise HTTPException(status_code=400, detail="empty file")
-
+def load_rgb_image(content: bytes) -> tuple[Any, float]:
     try:
-        return Image.open(io.BytesIO(content)).convert("RGB")
-    except Exception as exc:  # pragma: no cover
-        raise HTTPException(status_code=400, detail=f"invalid image: {exc}") from exc
+        return server.load_rgb_image(content)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/health")
@@ -45,7 +39,7 @@ async def health() -> dict[str, Any]:
 
 @app.post("/api/ocr/palette-card")
 async def ocr_palette_card(file: UploadFile = File(...)) -> Any:
-    image = load_rgb_image(await file.read())
+    image, _ = load_rgb_image(await file.read())
     result = server.analyze_palette_card(image)
     if not result["recognizedEntries"] and result["ocrError"]:
         return JSONResponse(status_code=503, content=result)
@@ -54,7 +48,7 @@ async def ocr_palette_card(file: UploadFile = File(...)) -> Any:
 
 @app.post("/api/ocr/manual-swatch")
 async def ocr_manual_swatch(file: UploadFile = File(...)) -> Any:
-    image = load_rgb_image(await file.read())
+    image, _ = load_rgb_image(await file.read())
     result = server.analyze_manual_swatch(image)
     if not result["code"] and result["ocrError"]:
         return JSONResponse(status_code=503, content=result)
@@ -73,14 +67,14 @@ async def ocr_palette_grid(
     width: float = Form(...),
     height: float = Form(...),
 ) -> Any:
-    image = load_rgb_image(await file.read())
+    image, scale = load_rgb_image(await file.read())
     result = server.analyze_palette_grid(
         image,
         {
-            "x": int(round(x)),
-            "y": int(round(y)),
-            "width": int(round(width)),
-            "height": int(round(height)),
+            "x": int(round(x * scale)),
+            "y": int(round(y * scale)),
+            "width": int(round(width * scale)),
+            "height": int(round(height * scale)),
         },
         rows,
         cols,
