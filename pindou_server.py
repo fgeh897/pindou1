@@ -57,6 +57,7 @@ OCR_ERROR: str | None = None
 OCR_ENGINE_NAME = "unavailable"
 MAX_OCR_IMAGE_EDGE = max(1200, int(os.environ.get("PINDOU_OCR_MAX_EDGE", "2400")))
 MAX_OCR_IMAGE_PIXELS = max(1_000_000, int(os.environ.get("PINDOU_OCR_MAX_PIXELS", "5000000")))
+OCR_LAYOUT_SCAN_MAX_EDGE = max(400, int(os.environ.get("PINDOU_OCR_LAYOUT_MAX_EDGE", "800")))
 
 
 def read_persisted_state() -> dict[str, Any]:
@@ -153,6 +154,26 @@ def load_rgb_image(content: bytes) -> tuple[Image.Image, float]:
     pixel_scale = min(1.0, math.sqrt(MAX_OCR_IMAGE_PIXELS / total_pixels)) if total_pixels else 1.0
     scale = min(edge_scale, pixel_scale)
 
+    if scale >= 0.999:
+        return image, 1.0
+
+    resized = image.resize(
+        (
+            max(1, int(round(width * scale))),
+            max(1, int(round(height * scale))),
+        ),
+        Image.Resampling.LANCZOS,
+    )
+    return resized, scale
+
+
+def build_layout_scan_image(image: Image.Image) -> tuple[Image.Image, float]:
+    width, height = image.size
+    longest_edge = max(width, height)
+    if longest_edge <= 0:
+        return image, 1.0
+
+    scale = min(1.0, OCR_LAYOUT_SCAN_MAX_EDGE / longest_edge)
     if scale >= 0.999:
         return image, 1.0
 
@@ -411,7 +432,8 @@ def extract_ocr_lines(image: Image.Image) -> list[dict[str, Any]]:
         return []
 
     engine_name, engine = engine_pack
-    source = pil_to_array(image)
+    scan_image, scan_scale = build_layout_scan_image(image)
+    source = pil_to_array(scan_image)
     lines: list[dict[str, Any]] = []
 
     if engine_name == "rapidocr":
@@ -423,12 +445,15 @@ def extract_ocr_lines(image: Image.Image) -> list[dict[str, Any]]:
             polygon, text, score = item[0], item[1], item[2]
             if not isinstance(text, str):
                 continue
+            rect = polygon_to_rect(polygon)
+            if scan_scale < 0.999:
+                rect = {key: int(round(value / scan_scale)) for key, value in rect.items()}
             lines.append(
                 {
                     "text": text,
                     "score": float(score) if isinstance(score, (int, float)) else 0.0,
                     "polygon": polygon,
-                    "rect": polygon_to_rect(polygon),
+                    "rect": rect,
                 }
             )
         return lines
@@ -446,12 +471,15 @@ def extract_ocr_lines(image: Image.Image) -> list[dict[str, Any]]:
             score = text_pack[1] if len(text_pack) > 1 else 0.0
             if not isinstance(text, str):
                 continue
+            rect = polygon_to_rect(polygon)
+            if scan_scale < 0.999:
+                rect = {key: int(round(value / scan_scale)) for key, value in rect.items()}
             lines.append(
                 {
                     "text": text,
                     "score": float(score) if isinstance(score, (int, float)) else 0.0,
                     "polygon": polygon,
-                    "rect": polygon_to_rect(polygon),
+                    "rect": rect,
                 }
             )
     return lines

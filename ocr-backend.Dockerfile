@@ -8,7 +8,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PINDOU_CACHE_DIR=/var/data/pindou-cache \
     PINDOU_STATE_FILE=/var/data/pindou-persist-state.json \
     PINDOU_OCR_MAX_EDGE=2000 \
-    PINDOU_OCR_MAX_PIXELS=3500000
+    PINDOU_OCR_MAX_PIXELS=3500000 \
+    PINDOU_OCR_LAYOUT_MAX_EDGE=800
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1 \
