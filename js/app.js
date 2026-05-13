@@ -883,6 +883,13 @@ function getMasterPalette() {
   }));
 }
 
+function getPaletteEntryByCode(code, palette = getMasterPalette()) {
+  if (!code) {
+    return null;
+  }
+  return palette.find((entry) => entry.code === code) || null;
+}
+
 function buildLegendProbeCanvas(originalCanvas) {
   const width = originalCanvas.width;
   const height = Math.floor(originalCanvas.height * 0.34);
@@ -1233,14 +1240,19 @@ function buildTextMaskVariantsFromSwatch(sourceCanvas, box, backgroundRgb) {
 }
 
 function recognizeSwatchCode(sourceCanvas, swatch) {
+  const palette = getMasterPalette();
+  const nearestCandidates = getNearestMasterColorCandidates(swatch.rgb, palette, 14);
+  const candidateCodes = nearestCandidates.length
+    ? nearestCandidates.map((entry) => entry.code)
+    : getCodeCandidateList();
   const sampleMasks = buildTextMaskVariantsFromSwatch(sourceCanvas, swatch.box, swatch.rgb);
   if (!sampleMasks.length) {
-    return null;
+    return buildColorFallbackMatch(swatch, palette);
   }
 
   let bestMatch = null;
   for (const sampleMask of sampleMasks) {
-    for (const code of getCodeCandidateList()) {
+    for (const code of candidateCodes) {
       const variants = getCodeTemplateVariants(code);
       for (const variant of variants) {
         const score = compareBinaryMasks(sampleMask, variant);
@@ -1251,11 +1263,33 @@ function recognizeSwatchCode(sourceCanvas, swatch) {
     }
   }
 
-  if (!bestMatch || bestMatch.score < 0.18) {
-    return null;
+  const colorFallback = buildColorFallbackMatch(swatch, palette);
+  if (!bestMatch) {
+    return colorFallback;
   }
 
-  return bestMatch;
+  const ocrMatchedEntry = getPaletteEntryByCode(bestMatch.code, palette);
+  const ocrColorDistance = ocrMatchedEntry
+    ? getPerceptualDistance(swatch.rgb, ocrMatchedEntry.rgb)
+    : Number.POSITIVE_INFINITY;
+  const fallbackDistance = colorFallback?.colorDistance ?? Number.POSITIVE_INFINITY;
+  const ocrLooksTrustworthy =
+    bestMatch.score >= 0.34 ||
+    (
+      bestMatch.score >= 0.24 &&
+      ocrColorDistance <= fallbackDistance + 2.4
+    ) ||
+    ocrColorDistance <= fallbackDistance + 0.9;
+
+  if (bestMatch.score < 0.18 || !ocrLooksTrustworthy) {
+    return colorFallback;
+  }
+
+  return {
+    ...bestMatch,
+    mode: "ocr",
+    colorDistance: ocrColorDistance,
+  };
 }
 
 function extractSwatchBoxesFromCanvas(sourceCanvas, options = {}) {
@@ -2450,6 +2484,30 @@ function getNearestMasterColor(sampleRgb, palette) {
     }
   }
   return bestMatch;
+}
+
+function getNearestMasterColorCandidates(sampleRgb, palette = getMasterPalette(), limit = 12) {
+  return [...palette]
+    .map((entry) => ({
+      code: entry.code,
+      rgb: entry.rgb,
+      distance: getPerceptualDistance(sampleRgb, entry.rgb),
+    }))
+    .sort((left, right) => left.distance - right.distance)
+    .slice(0, Math.max(1, limit));
+}
+
+function buildColorFallbackMatch(swatch, palette = getMasterPalette()) {
+  const nearest = getNearestMasterColorCandidates(swatch.rgb, palette, 1)[0];
+  if (!nearest) {
+    return null;
+  }
+  return {
+    code: nearest.code,
+    score: Math.max(0.2, 0.88 - nearest.distance / 36),
+    mode: "color-fallback",
+    colorDistance: nearest.distance,
+  };
 }
 
 function buildCropDisplay(image) {
