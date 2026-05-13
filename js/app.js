@@ -1122,47 +1122,131 @@ function compareBinaryMasks(left, right) {
   return overlap / union - densityPenalty * 0.18;
 }
 
-function buildTextMaskFromSwatch(sourceCanvas, box, backgroundRgb) {
+function upscaleImageData(imageData, scale = 3) {
+  const sourceCanvas = document.createElement("canvas");
+  sourceCanvas.width = imageData.width;
+  sourceCanvas.height = imageData.height;
+  const sourceCtx = sourceCanvas.getContext("2d", { willReadFrequently: true });
+  sourceCtx.putImageData(imageData, 0, 0);
+
+  const outputCanvas = document.createElement("canvas");
+  outputCanvas.width = imageData.width * scale;
+  outputCanvas.height = imageData.height * scale;
+  const outputCtx = outputCanvas.getContext("2d", { willReadFrequently: true });
+  outputCtx.imageSmoothingEnabled = true;
+  outputCtx.imageSmoothingQuality = "high";
+  outputCtx.drawImage(sourceCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
+  return outputCtx.getImageData(0, 0, outputCanvas.width, outputCanvas.height);
+}
+
+function cleanupBinaryMask(mask, width, height, iterations = 2) {
+  let current = mask.slice();
+  for (let iteration = 0; iteration < iterations; iteration += 1) {
+    const next = new Uint8Array(current.length);
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        let neighbors = 0;
+        for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+          for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+            const sampleX = x + offsetX;
+            const sampleY = y + offsetY;
+            if (sampleX < 0 || sampleY < 0 || sampleX >= width || sampleY >= height) {
+              continue;
+            }
+            neighbors += current[sampleY * width + sampleX];
+          }
+        }
+        const index = y * width + x;
+        const active = current[index] === 1;
+        next[index] = active ? (neighbors >= 3 ? 1 : 0) : neighbors >= 6 ? 1 : 0;
+      }
+    }
+    current = next;
+  }
+  return current;
+}
+
+function buildNormalizedTextMask(mask, width, height) {
+  const cleaned = cleanupBinaryMask(mask, width, height, 2);
+  return normalizeBinaryMask(cleaned, width, height);
+}
+
+function buildTextMaskVariantsFromSwatch(sourceCanvas, box, backgroundRgb) {
   const ctx = sourceCanvas.getContext("2d", { willReadFrequently: true });
   const roi = {
     x: Math.max(0, Math.floor(box.x + box.width * 0.04)),
-    y: Math.max(0, Math.floor(box.y + box.height * 0.12)),
-    width: Math.max(16, Math.floor(box.width * 0.46)),
-    height: Math.max(12, Math.floor(box.height * 0.62)),
+    y: Math.max(0, Math.floor(box.y + box.height * 0.08)),
+    width: Math.max(18, Math.floor(box.width * 0.58)),
+    height: Math.max(14, Math.floor(box.height * 0.7)),
   };
-  const imageData = ctx.getImageData(
+  const baseImageData = ctx.getImageData(
     roi.x,
     roi.y,
     Math.min(roi.width, sourceCanvas.width - roi.x),
     Math.min(roi.height, sourceCanvas.height - roi.y),
   );
-  const mask = new Uint8Array(imageData.width * imageData.height);
-  const threshold = 44;
+  const imageData = upscaleImageData(baseImageData, 3);
+  const backgroundBrightness = (backgroundRgb[0] + backgroundRgb[1] + backgroundRgb[2]) / 3;
+  const presets = [
+    { distance: 24, brightness: 16, channel: 14 },
+    { distance: 34, brightness: 24, channel: 20 },
+    { distance: 46, brightness: 32, channel: 26 },
+  ];
+  const variants = [];
 
-  for (let y = 0; y < imageData.height; y += 1) {
-    for (let x = 0; x < imageData.width; x += 1) {
-      const index = (y * imageData.width + x) * 4;
-      const rgb = [imageData.data[index], imageData.data[index + 1], imageData.data[index + 2]];
-      mask[y * imageData.width + x] = getRgbDistance(rgb, backgroundRgb) >= threshold ? 1 : 0;
+  for (const preset of presets) {
+    const mask = new Uint8Array(imageData.width * imageData.height);
+    for (let y = 0; y < imageData.height; y += 1) {
+      for (let x = 0; x < imageData.width; x += 1) {
+        const index = (y * imageData.width + x) * 4;
+        const red = imageData.data[index];
+        const green = imageData.data[index + 1];
+        const blue = imageData.data[index + 2];
+        const rgb = [red, green, blue];
+        const brightness = (red + green + blue) / 3;
+        const brightnessDelta = Math.abs(brightness - backgroundBrightness);
+        const channelDelta = Math.max(
+          Math.abs(red - backgroundRgb[0]),
+          Math.abs(green - backgroundRgb[1]),
+          Math.abs(blue - backgroundRgb[2]),
+        );
+        const directionalContrast =
+          backgroundBrightness < 128
+            ? brightness - backgroundBrightness
+            : backgroundBrightness - brightness;
+        mask[y * imageData.width + x] =
+          getRgbDistance(rgb, backgroundRgb) >= preset.distance ||
+          brightnessDelta >= preset.brightness ||
+          channelDelta >= preset.channel ||
+          directionalContrast >= preset.brightness * 0.72
+            ? 1
+            : 0;
+      }
+    }
+    const normalized = buildNormalizedTextMask(mask, imageData.width, imageData.height);
+    if (normalized) {
+      variants.push(normalized);
     }
   }
 
-  return normalizeBinaryMask(mask, imageData.width, imageData.height);
+  return variants;
 }
 
 function recognizeSwatchCode(sourceCanvas, swatch) {
-  const sampleMask = buildTextMaskFromSwatch(sourceCanvas, swatch.box, swatch.rgb);
-  if (!sampleMask) {
+  const sampleMasks = buildTextMaskVariantsFromSwatch(sourceCanvas, swatch.box, swatch.rgb);
+  if (!sampleMasks.length) {
     return null;
   }
 
   let bestMatch = null;
-  for (const code of getCodeCandidateList()) {
-    const variants = getCodeTemplateVariants(code);
-    for (const variant of variants) {
-      const score = compareBinaryMasks(sampleMask, variant);
-      if (!bestMatch || score > bestMatch.score) {
-        bestMatch = { code, score };
+  for (const sampleMask of sampleMasks) {
+    for (const code of getCodeCandidateList()) {
+      const variants = getCodeTemplateVariants(code);
+      for (const variant of variants) {
+        const score = compareBinaryMasks(sampleMask, variant);
+        if (!bestMatch || score > bestMatch.score) {
+          bestMatch = { code, score };
+        }
       }
     }
   }
