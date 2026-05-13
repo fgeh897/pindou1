@@ -13,7 +13,13 @@ services:
     envVars:
       - key: PINDOU_DEPLOYMENT_MODE
         value: api_only
+      - key: PINDOU_OCR_ENGINE
+        value: rapidocr
       - key: PINDOU_CACHE_DIR
         value: /var/data/pindou-cache
       - key: PINDOU_STATE_FILE
         value: /var/data/pindou-persist-state.json
+      - key: PINDOU_OCR_MAX_EDGE
+        value: 2000
+      - key: PINDOU_OCR_MAX_PIXELS
+        value: 3500000

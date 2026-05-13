@@ -846,6 +846,7 @@ def build_app() -> Any:
         engine = get_ocr_engine()
         return {
             "ok": True,
+            "engine": OCR_ENGINE_NAME,
             "ocrReady": engine is not None,
             "ocrError": OCR_ERROR,
         }
