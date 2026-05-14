@@ -986,6 +986,7 @@ function isPotentialSwatchPixel(r, g, b, a) {
 }
 
 const CODE_TEMPLATE_CACHE = new Map();
+const GLYPH_TEMPLATE_CACHE = new Map();
 
 function getCodeCandidateList() {
   const knownCodes = new Set((window.PINDOU_COLORS || []).map((entry) => entry.code));
@@ -1091,10 +1092,60 @@ function renderCodeTemplateMask(code, fontFamily) {
   return normalized;
 }
 
+function renderGlyphTemplateMask(char, fontFamily) {
+  const cacheKey = `${char}::${fontFamily}`;
+  if (GLYPH_TEMPLATE_CACHE.has(cacheKey)) {
+    return GLYPH_TEMPLATE_CACHE.get(cacheKey);
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = 92;
+  canvas.height = 92;
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#111111";
+
+  let fontSize = 68;
+  for (; fontSize >= 26; fontSize -= 2) {
+    ctx.font = `900 ${fontSize}px ${fontFamily}`;
+    if (ctx.measureText(char).width <= canvas.width * 0.7) {
+      break;
+    }
+  }
+
+  ctx.font = `900 ${fontSize}px ${fontFamily}`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(char, canvas.width / 2, canvas.height / 2 + 2);
+
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const mask = new Uint8Array(canvas.width * canvas.height);
+  for (let index = 0; index < mask.length; index += 1) {
+    const pixelIndex = index * 4;
+    const brightness =
+      (imageData.data[pixelIndex] + imageData.data[pixelIndex + 1] + imageData.data[pixelIndex + 2]) / 3;
+    mask[index] = brightness < 180 ? 1 : 0;
+  }
+
+  const normalized = normalizeBinaryMask(mask, canvas.width, canvas.height, 22, 28);
+  GLYPH_TEMPLATE_CACHE.set(cacheKey, normalized);
+  return normalized;
+}
+
 function getCodeTemplateVariants(code) {
   return [
     renderCodeTemplateMask(code, '"Arial Black", "Segoe UI", sans-serif'),
     renderCodeTemplateMask(code, '"Segoe UI", Arial, sans-serif'),
+    renderCodeTemplateMask(code, '"Consolas", "Lucida Console", "Courier New", monospace'),
+  ].filter(Boolean);
+}
+
+function getGlyphTemplateVariants(char) {
+  return [
+    renderGlyphTemplateMask(char, '"Arial Black", "Segoe UI", sans-serif'),
+    renderGlyphTemplateMask(char, '"Segoe UI", Arial, sans-serif'),
+    renderGlyphTemplateMask(char, '"Consolas", "Lucida Console", "Courier New", monospace'),
   ].filter(Boolean);
 }
 
@@ -1127,6 +1178,95 @@ function compareBinaryMasks(left, right) {
 
   const densityPenalty = Math.abs(leftCount - rightCount) / Math.max(leftCount, rightCount, 1);
   return overlap / union - densityPenalty * 0.18;
+}
+
+function splitNormalizedMaskIntoGlyphs(maskLike, expectedCount = 3) {
+  if (!maskLike?.data?.length) {
+    return [];
+  }
+
+  const columnActive = [];
+  for (let x = 0; x < maskLike.width; x += 1) {
+    let active = 0;
+    for (let y = 0; y < maskLike.height; y += 1) {
+      active += maskLike.data[y * maskLike.width + x];
+    }
+    columnActive.push(active);
+  }
+
+  const runs = [];
+  let start = -1;
+  for (let x = 0; x < columnActive.length; x += 1) {
+    if (columnActive[x] > 0) {
+      if (start < 0) {
+        start = x;
+      }
+      continue;
+    }
+    if (start >= 0) {
+      runs.push({ start, end: x - 1 });
+      start = -1;
+    }
+  }
+  if (start >= 0) {
+    runs.push({ start, end: columnActive.length - 1 });
+  }
+
+  const mergedRuns = [];
+  for (const run of runs) {
+    const previous = mergedRuns[mergedRuns.length - 1];
+    if (previous && run.start - previous.end <= 2) {
+      previous.end = run.end;
+      continue;
+    }
+    mergedRuns.push({ ...run });
+  }
+
+  const filteredRuns = mergedRuns.filter((run) => run.end - run.start + 1 >= 2);
+  if (filteredRuns.length < 2 || filteredRuns.length > 4) {
+    return [];
+  }
+
+  if (Number.isFinite(expectedCount) && expectedCount > 0 && filteredRuns.length !== expectedCount) {
+    return [];
+  }
+
+  return filteredRuns
+    .map((run) => {
+      const width = run.end - run.start + 1;
+      const glyphMask = new Uint8Array(width * maskLike.height);
+      for (let y = 0; y < maskLike.height; y += 1) {
+        for (let x = 0; x < width; x += 1) {
+          glyphMask[y * width + x] = maskLike.data[y * maskLike.width + run.start + x];
+        }
+      }
+      return normalizeBinaryMask(glyphMask, width, maskLike.height, 22, 28);
+    })
+    .filter(Boolean);
+}
+
+function scoreCodeGlyphMatch(sampleMask, code) {
+  const glyphMasks = splitNormalizedMaskIntoGlyphs(sampleMask, code.length);
+  if (glyphMasks.length !== code.length) {
+    return null;
+  }
+
+  let total = 0;
+  for (let index = 0; index < code.length; index += 1) {
+    let bestScore = null;
+    for (const variant of getGlyphTemplateVariants(code[index])) {
+      const score = compareBinaryMasks(glyphMasks[index], variant);
+      if (bestScore === null || score > bestScore) {
+        bestScore = score;
+      }
+    }
+    if (bestScore === null) {
+      return null;
+    }
+    total += bestScore;
+  }
+
+  return total / code.length;
 }
 
 function upscaleImageData(imageData, scale = 3) {
@@ -1253,11 +1393,16 @@ function recognizeSwatchCode(sourceCanvas, swatch) {
   let bestMatch = null;
   for (const sampleMask of sampleMasks) {
     for (const code of candidateCodes) {
+      const glyphScore = scoreCodeGlyphMatch(sampleMask, code);
       const variants = getCodeTemplateVariants(code);
       for (const variant of variants) {
-        const score = compareBinaryMasks(sampleMask, variant);
+        const fullScore = compareBinaryMasks(sampleMask, variant);
+        const score =
+          glyphScore === null
+            ? fullScore
+            : fullScore * 0.42 + glyphScore * 0.58;
         if (!bestMatch || score > bestMatch.score) {
-          bestMatch = { code, score };
+          bestMatch = { code, score, fullScore, glyphScore };
         }
       }
     }
@@ -1274,14 +1419,19 @@ function recognizeSwatchCode(sourceCanvas, swatch) {
     : Number.POSITIVE_INFINITY;
   const fallbackDistance = colorFallback?.colorDistance ?? Number.POSITIVE_INFINITY;
   const ocrLooksTrustworthy =
-    bestMatch.score >= 0.34 ||
+    bestMatch.score >= 0.4 ||
     (
-      bestMatch.score >= 0.24 &&
+      bestMatch.glyphScore !== null &&
+      bestMatch.glyphScore >= 0.32 &&
+      ocrColorDistance <= fallbackDistance + 1.8
+    ) ||
+    (
+      bestMatch.score >= 0.28 &&
       ocrColorDistance <= fallbackDistance + 2.4
     ) ||
     ocrColorDistance <= fallbackDistance + 0.9;
 
-  if (bestMatch.score < 0.18 || !ocrLooksTrustworthy) {
+  if (bestMatch.score < 0.2 || !ocrLooksTrustworthy) {
     return colorFallback;
   }
 
