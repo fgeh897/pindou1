@@ -3149,75 +3149,87 @@ function injectEnhancementControls() {
     paletteTools.innerHTML = `
       <h3>色卡图片识别</h3>
       <p class="plan-text">上传颜色卡截图后，系统会先尝试识别每个色块里的色号文字，再把这个色号和该色块的实际背景色绑定成本图色卡。这样即使这张图和标准色卡有色差，后续解析也会优先按本图颜色来匹配。</p>
-      <div class="field-grid" style="margin-top:12px;">
-        <label class="field">
-          <span>导入方式</span>
-          <select id="paletteImportModeSelect">
-            <option value="replace">替换当前色卡，按这张图单独成套</option>
-            <option value="merge">合并到当前色卡</option>
-          </select>
-        </label>
-        <div class="field">
-          <span>当前色卡套装</span>
-          <p class="empty-text" id="paletteSetNameText">当前项目色卡</p>
+      <div class="palette-import-toolbar" style="margin-top:12px;">
+        <div class="palette-import-grid">
+          <label class="field">
+            <span>导入方式</span>
+            <select id="paletteImportModeSelect">
+              <option value="replace">替换当前色卡，按这张图单独成套</option>
+              <option value="merge">合并到当前色卡</option>
+            </select>
+          </label>
+          <div class="field palette-set-summary">
+            <span>当前色卡套装</span>
+            <p class="empty-text" id="paletteSetNameText">当前项目色卡</p>
+          </div>
         </div>
+        <div class="palette-import-actions">
+          <button id="extractLegendBtn" type="button">识别原图底部色卡</button>
+          <button id="uploadPaletteImageBtn" class="ghost-btn" type="button">上传颜色卡做本图校准</button>
+        </div>
+        <input id="paletteImageInput" type="file" accept="image/*" style="display:none;" />
+        <div id="paletteExtractStatus" class="empty-text palette-import-status">建议先有色号列表，再上传颜色卡截图校准本图颜色。</div>
       </div>
-      <div class="button-row" style="margin-top:12px;">
-        <button id="extractLegendBtn" type="button">识别原图底部色卡</button>
-        <button id="uploadPaletteImageBtn" class="ghost-btn" type="button">上传颜色卡做本图校准</button>
-      </div>
-      <input id="paletteImageInput" type="file" accept="image/*" style="display:none;" />
-      <div id="paletteExtractStatus" class="empty-text" style="margin-top:10px;">建议先有色号列表，再上传颜色卡截图校准本图颜色。</div>
-      <div class="summary-card" style="margin-top:12px; padding:12px;">
-        <h3>识别效果预览</h3>
-        <p class="plan-text">先看左侧整图框选结果，再从右侧列表点选单个色块。绿色 = 已识别，红色 = 待补，黄色虚线 = 你正在手动框选的区域。若两个色块被识别成一个，先删掉误框，再重新拖小框拆分。手动框选长条色卡时，系统会尽量只从真正的色块区取色，忽略右侧数量区。</p>
+      <div class="summary-card palette-review-shell" style="margin-top:12px; padding:12px;">
+        <div class="palette-review-shell-head">
+          <div>
+            <h3>识别与修正工作台</h3>
+            <p class="plan-text">点左侧框或右侧列表，右边就能直接改色号、取真实底色并保存。绿色 = 已识别，红色 = 待补，黄色虚线 = 你正在手动框选的区域。</p>
+          </div>
+          <p id="paletteReviewStatus" class="empty-text palette-review-status">上传颜色卡后，这里会显示识别到的色块和色号。</p>
+        </div>
         <div class="palette-review-layout">
           <div class="summary-card palette-review-stage">
+            <div class="palette-review-card-head">
+              <h4>整图识别框</h4>
+              <p class="empty-text">先在左边选一个色块，或直接拖框拆开误识别区域。</p>
+            </div>
             <canvas id="paletteReviewCanvas" aria-label="颜色卡识别预览"></canvas>
           </div>
           <div class="summary-card palette-review-side">
+            <div class="palette-review-card-head">
+              <h4>当前选中色块</h4>
+              <p class="empty-text">右边这块就是你的即时编辑区，不用再翻上翻下找保存。</p>
+            </div>
             <canvas id="paletteReviewDetailCanvas" aria-label="当前色块放大预览"></canvas>
-            <div id="paletteReviewList" class="palette-review-list"></div>
-          </div>
-        </div>
-        <p id="paletteReviewStatus" class="empty-text" style="margin-top:10px;">上传颜色卡后，这里会显示识别到的色块和色号。</p>
-        <div class="summary-card" style="margin-top:12px; padding:12px;">
-          <h3>手动框选修正</h3>
-          <p class="plan-text">如果自动识别把两个色块并成一个，或者你更相信自己眼睛，就直接在左侧拖框，右侧点真实底色，再手填色号保存。手动模式不会被自动 OCR 强行改掉。</p>
-          <div class="field-grid" style="margin-top:12px;">
-            <label class="field">
-              <span>修正模式</span>
-              <select id="paletteReviewModeSelect">
-                <option value="color-first">颜色优先：手填色号 + 内部色块取色保存</option>
-                <option value="ocr-first">色号优先：调用后端 OCR 重识别文字</option>
-              </select>
-            </label>
-            <label class="field">
-              <span>手动色号</span>
-              <input id="paletteReviewCodeInput" type="text" maxlength="12" placeholder="例如 H9 / C20" list="paletteReviewCodeList" />
-              <datalist id="paletteReviewCodeList"></datalist>
-            </label>
-            <div class="field">
-              <span>手动修正</span>
-              <div class="button-row">
+            <div class="palette-review-editor">
+              <div class="palette-review-control-grid">
+                <label class="field">
+                  <span>修正模式</span>
+                  <select id="paletteReviewModeSelect">
+                    <option value="color-first">颜色优先：手填色号 + 内部取色保存</option>
+                    <option value="ocr-first">色号优先：调用后端 OCR 重识别文字</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>手动色号</span>
+                  <input id="paletteReviewCodeInput" type="text" maxlength="12" placeholder="例如 H9 / C20" list="paletteReviewCodeList" />
+                  <datalist id="paletteReviewCodeList"></datalist>
+                </label>
+              </div>
+              <div class="palette-review-primary-actions">
+                <button id="paletteReviewSaveBtn" type="button">按手填色号保存色卡</button>
                 <button id="paletteReviewRetryBtn" class="ghost-btn" type="button">后端重识别文字</button>
-                <button id="paletteReviewSaveBtn" type="button">把框选新建为色卡</button>
+              </div>
+              <div class="palette-review-secondary-actions">
                 <button id="paletteReviewDeleteBtn" class="ghost-btn" type="button">删除选中色块</button>
                 <button id="paletteReviewClearBtn" class="ghost-btn" type="button">清除框选</button>
               </div>
-            </div>
-          </div>
-          <div class="field-grid" style="margin-top:12px;">
-            <div class="field">
-              <span>真实取色</span>
-              <p class="empty-text" id="paletteReviewColorValue">直接在右侧放大预览上点真实像素，或点下面 5x5 像素板。保存时会优先使用你手选的颜色。</p>
-              <div id="paletteReviewPixelGrid" class="palette-pixel-grid"></div>
-            </div>
-            <div class="field">
-              <span>颜色修正</span>
-              <div class="button-row">
-                <button id="paletteReviewResetColorBtn" class="ghost-btn" type="button">清除手选颜色</button>
+              <div class="field palette-review-color-panel">
+                <span>真实取色</span>
+                <p class="empty-text" id="paletteReviewColorValue">直接在上方放大预览上点真实像素，或点下面 5x5 像素板。保存时会优先使用你手选的颜色。</p>
+                <div id="paletteReviewPixelGrid" class="palette-pixel-grid"></div>
+                <div class="button-row">
+                  <button id="paletteReviewResetColorBtn" class="ghost-btn" type="button">清除手选颜色</button>
+                </div>
               </div>
+            </div>
+            <div class="palette-review-list-card">
+              <div class="palette-review-card-head">
+                <h4>识别列表</h4>
+                <p class="empty-text">点一个条目，右侧会直接切换到它。</p>
+              </div>
+              <div id="paletteReviewList" class="palette-review-list"></div>
             </div>
           </div>
         </div>
