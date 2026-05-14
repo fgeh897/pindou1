@@ -3178,61 +3178,65 @@ function injectEnhancementControls() {
           </div>
           <p id="paletteReviewStatus" class="empty-text palette-review-status">上传颜色卡后，这里会显示识别到的色块和色号。</p>
         </div>
-        <div class="palette-review-layout">
-          <div class="summary-card palette-review-stage">
-            <div class="palette-review-card-head">
-              <h4>整图识别框</h4>
-              <p class="empty-text">先在左边选一个色块，或直接拖框拆开误识别区域。</p>
-            </div>
-            <canvas id="paletteReviewCanvas" aria-label="颜色卡识别预览"></canvas>
+      <div class="palette-review-layout">
+        <div class="summary-card palette-review-stage">
+          <div class="palette-review-card-head">
+            <h4>整图识别框</h4>
+            <p class="empty-text">先在左边选一个色块，或直接拖框拆开误识别区域。</p>
           </div>
-          <div class="summary-card palette-review-side">
-            <div class="palette-review-card-head">
-              <h4>当前选中色块</h4>
-              <p class="empty-text">右边这块就是你的即时编辑区，不用再翻上翻下找保存。</p>
-            </div>
-            <canvas id="paletteReviewDetailCanvas" aria-label="当前色块放大预览"></canvas>
-            <div class="palette-review-editor">
-              <div class="palette-review-control-grid">
-                <label class="field">
-                  <span>修正模式</span>
-                  <select id="paletteReviewModeSelect">
-                    <option value="color-first">颜色优先：手填色号 + 内部取色保存</option>
-                    <option value="ocr-first">色号优先：调用后端 OCR 重识别文字</option>
-                  </select>
-                </label>
-                <label class="field">
-                  <span>手动色号</span>
-                  <input id="paletteReviewCodeInput" type="text" maxlength="12" placeholder="例如 H9 / C20" list="paletteReviewCodeList" />
-                  <datalist id="paletteReviewCodeList"></datalist>
-                </label>
+          <canvas id="paletteReviewCanvas" aria-label="颜色卡识别预览"></canvas>
+        </div>
+          <div class="palette-review-workzone">
+            <div class="summary-card palette-review-focus-card">
+              <div class="palette-review-card-head">
+                <h4>当前选中色块</h4>
+                <p class="empty-text">选中后就在这里改色号、取真实底色、保存，不再跨屏来回跑。</p>
               </div>
-              <div class="palette-review-primary-actions">
-                <button id="paletteReviewSaveBtn" type="button">按手填色号保存色卡</button>
-                <button id="paletteReviewRetryBtn" class="ghost-btn" type="button">后端重识别文字</button>
-              </div>
-              <div class="palette-review-secondary-actions">
-                <button id="paletteReviewDeleteBtn" class="ghost-btn" type="button">删除选中色块</button>
-                <button id="paletteReviewClearBtn" class="ghost-btn" type="button">清除框选</button>
+              <div class="palette-review-focus-layout">
+                <canvas id="paletteReviewDetailCanvas" aria-label="当前色块放大预览"></canvas>
+                <div class="palette-review-editor">
+                  <div class="palette-review-control-grid">
+                    <label class="field">
+                      <span>修正模式</span>
+                      <select id="paletteReviewModeSelect">
+                        <option value="color-first">颜色优先：手填色号 + 内部取色保存</option>
+                        <option value="ocr-first">色号优先：调用后端 OCR 重识别文字</option>
+                      </select>
+                    </label>
+                    <label class="field">
+                      <span>手动色号</span>
+                      <input id="paletteReviewCodeInput" type="text" maxlength="12" placeholder="例如 H9 / C20" list="paletteReviewCodeList" />
+                      <datalist id="paletteReviewCodeList"></datalist>
+                    </label>
+                  </div>
+                  <div class="palette-review-primary-actions">
+                    <button id="paletteReviewSaveBtn" type="button">按手填色号保存色卡</button>
+                    <button id="paletteReviewRetryBtn" class="ghost-btn" type="button">后端重识别文字</button>
+                  </div>
+                  <div class="palette-review-secondary-actions">
+                    <button id="paletteReviewDeleteBtn" class="ghost-btn" type="button">删除选中色块</button>
+                    <button id="paletteReviewClearBtn" class="ghost-btn" type="button">清除框选</button>
+                  </div>
+                </div>
               </div>
               <div class="field palette-review-color-panel">
                 <span>真实取色</span>
-                <p class="empty-text" id="paletteReviewColorValue">直接在上方放大预览上点真实像素，或点下面 5x5 像素板。保存时会优先使用你手选的颜色。</p>
+                <p class="empty-text" id="paletteReviewColorValue">直接在放大预览上点真实像素，或点下面 5x5 像素板。保存时会优先使用你手选的颜色。</p>
                 <div id="paletteReviewPixelGrid" class="palette-pixel-grid"></div>
                 <div class="button-row">
                   <button id="paletteReviewResetColorBtn" class="ghost-btn" type="button">清除手选颜色</button>
                 </div>
               </div>
             </div>
-            <div class="palette-review-list-card">
+            <div class="summary-card palette-review-list-card">
               <div class="palette-review-card-head">
                 <h4>识别列表</h4>
-                <p class="empty-text">点一个条目，右侧会直接切换到它。</p>
+                <p class="empty-text">点一个条目，编辑卡会立刻切换到它。</p>
               </div>
               <div id="paletteReviewList" class="palette-review-list"></div>
             </div>
           </div>
-        </div>
+      </div>
         <div class="summary-card" style="margin-top:12px; padding:12px;">
           <h3>交互式网格覆盖</h3>
           <p class="plan-text">适合排版很规整的颜色卡。先输入行列数，再初始化网格；勾选“拖拽调整网格”后，可直接在左侧图上拖动外框和四角，把网格完全套住每个色块。若色块之间隔着数字或留白，可继续调“列间距/行间距”，让黄色工作框只包住真正的单个色卡。随后按格切图，交给后端逐格 OCR。</p>

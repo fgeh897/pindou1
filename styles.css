@@ -535,8 +535,9 @@ button:disabled { opacity: 0.4; cursor: default; }
   border: 1px solid var(--line);
 }
 .palette-review-layout {
-  display: grid; gap: 12px;
-  grid-template-columns: minmax(0, 1.7fr) minmax(320px, 420px);
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(0, 1fr);
   margin-top: 12px;
   align-items: start;
 }
@@ -562,14 +563,26 @@ button:disabled { opacity: 0.4; cursor: default; }
   border: 1px solid var(--line);
 }
 .palette-review-stage,
-.palette-review-side {
+.palette-review-focus-card,
+.palette-review-list-card {
   padding: 12px;
   display: grid;
   gap: 12px;
 }
-.palette-review-side {
-  position: sticky;
-  top: 92px;
+.palette-review-stage {
+  min-width: 0;
+}
+.palette-review-workzone {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr);
+  align-items: start;
+}
+.palette-review-focus-layout {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(240px, 0.95fr) minmax(260px, 1.05fr);
+  align-items: start;
 }
 .palette-review-card-head {
   display: flex;
@@ -589,10 +602,11 @@ button:disabled { opacity: 0.4; cursor: default; }
 .palette-review-editor {
   display: grid;
   gap: 12px;
+  align-content: start;
 }
 .palette-review-control-grid {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
 .palette-review-primary-actions {
@@ -605,8 +619,8 @@ button:disabled { opacity: 0.4; cursor: default; }
   font-size: 1rem;
 }
 .palette-review-secondary-actions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: 10px;
 }
 .palette-review-color-panel {
@@ -616,10 +630,7 @@ button:disabled { opacity: 0.4; cursor: default; }
   border: 1px solid var(--line);
 }
 .palette-review-list-card {
-  display: grid;
-  gap: 10px;
-  padding-top: 4px;
-  border-top: 1px solid var(--line);
+  align-content: start;
 }
 .palette-review-list {
   margin-top: 0;
@@ -779,8 +790,10 @@ button:disabled { opacity: 0.4; cursor: default; }
   .viewer-layout { grid-template-columns: 100px 1fr; gap: 8px; }
   .palette-import-grid { grid-template-columns: 1fr; }
   .palette-review-layout { grid-template-columns: 1fr; }
-  .palette-review-side { position: static; top: auto; }
-  .palette-review-secondary-actions { grid-template-columns: 1fr; }
+  .palette-review-workzone { grid-template-columns: 1fr; }
+  .palette-review-focus-layout { grid-template-columns: 1fr; }
+  .palette-review-control-grid { grid-template-columns: 1fr; }
+  .palette-review-secondary-actions { flex-direction: column; }
   .palette-review-shell-head { display: grid; }
   .field-grid { grid-template-columns: 1fr 1fr; }
   .stats-grid { grid-template-columns: 1fr; }
@@ -799,10 +812,6 @@ button:disabled { opacity: 0.4; cursor: default; }
 @media (min-width: 1024px) {
   .app-shell { max-width: 1380px; }
   .viewer-layout { grid-template-columns: 200px 1fr; }
-  .palette-review-layout {
-    grid-template-columns: minmax(0, 1.7fr) minmax(340px, 420px);
-    align-items: start;
-  }
   .library-grid { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
   #cropCanvas, #viewerCanvas, #overviewCanvas, #paletteReviewCanvas, #sampleInspectCanvas { min-height: 240px; }
   #overviewCanvas { max-height: 64vh; }
