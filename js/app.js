@@ -194,6 +194,7 @@ let paletteReviewState = {
 };
 
 const STORAGE_KEY = "pindou-assistant-state-v1";
+const LEARNED_GLYPH_STORAGE_KEY = "pindou-assistant-glyph-library-v1";
 const SERVER_STATE_URL = window.__PIN_DOU_CLOUD_STATE_URL__ || "/api/state";
 const OCR_API_BASE_URL = window.__PIN_DOU_OCR_API_BASE_URL__ || "https://pindou1-1.onrender.com";
 const BACKEND_PALETTE_OCR_URL = `${OCR_API_BASE_URL}/api/ocr/palette-card`;
@@ -987,6 +988,7 @@ function isPotentialSwatchPixel(r, g, b, a) {
 
 const CODE_TEMPLATE_CACHE = new Map();
 const GLYPH_TEMPLATE_CACHE = new Map();
+let learnedGlyphLibraryCache = null;
 
 function getCodeCandidateList() {
   const knownCodes = new Set((window.PINDOU_COLORS || []).map((entry) => entry.code));
@@ -994,6 +996,84 @@ function getCodeCandidateList() {
     knownCodes.add(entry.code);
   }
   return [...knownCodes].sort((left, right) => left.localeCompare(right));
+}
+
+function serializeBinaryMask(maskLike) {
+  if (!maskLike?.data?.length) {
+    return null;
+  }
+  return {
+    width: maskLike.width,
+    height: maskLike.height,
+    bits: Array.from(maskLike.data, (value) => (value ? "1" : "0")).join(""),
+  };
+}
+
+function deserializeBinaryMask(serialized) {
+  if (
+    !serialized ||
+    !Number.isInteger(serialized.width) ||
+    !Number.isInteger(serialized.height) ||
+    typeof serialized.bits !== "string"
+  ) {
+    return null;
+  }
+  const expectedLength = serialized.width * serialized.height;
+  if (serialized.bits.length !== expectedLength) {
+    return null;
+  }
+  const data = new Uint8Array(expectedLength);
+  for (let index = 0; index < expectedLength; index += 1) {
+    data[index] = serialized.bits[index] === "1" ? 1 : 0;
+  }
+  return {
+    width: serialized.width,
+    height: serialized.height,
+    data,
+  };
+}
+
+function loadLearnedGlyphLibrary() {
+  if (learnedGlyphLibraryCache) {
+    return learnedGlyphLibraryCache;
+  }
+
+  learnedGlyphLibraryCache = {};
+  try {
+    const raw = window.localStorage.getItem(LEARNED_GLYPH_STORAGE_KEY);
+    if (!raw) {
+      return learnedGlyphLibraryCache;
+    }
+    const parsed = JSON.parse(raw);
+    for (const [char, entries] of Object.entries(parsed || {})) {
+      if (!Array.isArray(entries)) {
+        continue;
+      }
+      const restored = entries.map(deserializeBinaryMask).filter(Boolean);
+      if (restored.length) {
+        learnedGlyphLibraryCache[char] = restored;
+      }
+    }
+  } catch (error) {
+    console.warn("Failed to load learned glyph library:", error);
+  }
+  return learnedGlyphLibraryCache;
+}
+
+function saveLearnedGlyphLibrary() {
+  try {
+    const serializable = {};
+    for (const [char, entries] of Object.entries(loadLearnedGlyphLibrary())) {
+      serializable[char] = entries.map(serializeBinaryMask).filter(Boolean);
+    }
+    window.localStorage.setItem(LEARNED_GLYPH_STORAGE_KEY, JSON.stringify(serializable));
+  } catch (error) {
+    console.warn("Failed to persist learned glyph library:", error);
+  }
+}
+
+function getLearnedGlyphTemplates(char) {
+  return loadLearnedGlyphLibrary()[char] || [];
 }
 
 function buildActiveBounds(mask, width, height) {
@@ -1143,6 +1223,7 @@ function getCodeTemplateVariants(code) {
 
 function getGlyphTemplateVariants(char) {
   return [
+    ...getLearnedGlyphTemplates(char),
     renderGlyphTemplateMask(char, '"Arial Black", "Segoe UI", sans-serif'),
     renderGlyphTemplateMask(char, '"Segoe UI", Arial, sans-serif'),
     renderGlyphTemplateMask(char, '"Consolas", "Lucida Console", "Courier New", monospace'),
@@ -1267,6 +1348,45 @@ function scoreCodeGlyphMatch(sampleMask, code) {
   }
 
   return total / code.length;
+}
+
+function learnGlyphTemplatesFromCode(sourceCanvas, swatch, code) {
+  const normalizedCode = String(code || "").trim().toUpperCase();
+  if (!/^[A-Z0-9]{2,4}$/.test(normalizedCode)) {
+    return 0;
+  }
+
+  const sampleMasks = buildTextMaskVariantsFromSwatch(sourceCanvas, swatch.box, swatch.rgb);
+  if (!sampleMasks.length) {
+    return 0;
+  }
+
+  const library = loadLearnedGlyphLibrary();
+  let added = 0;
+  for (const sampleMask of sampleMasks) {
+    const glyphMasks = splitNormalizedMaskIntoGlyphs(sampleMask, normalizedCode.length);
+    if (glyphMasks.length !== normalizedCode.length) {
+      continue;
+    }
+
+    for (let index = 0; index < normalizedCode.length; index += 1) {
+      const char = normalizedCode[index];
+      const glyphMask = glyphMasks[index];
+      const existing = library[char] || [];
+      const duplicate = existing.some((entry) => compareBinaryMasks(entry, glyphMask) >= 0.94);
+      if (duplicate) {
+        continue;
+      }
+      library[char] = [glyphMask, ...existing].slice(0, 12);
+      added += 1;
+    }
+  }
+
+  if (added) {
+    learnedGlyphLibraryCache = library;
+    saveLearnedGlyphLibrary();
+  }
+  return added;
 }
 
 function upscaleImageData(imageData, scale = 3) {
@@ -6642,6 +6762,7 @@ function savePaletteSelectionManually() {
     setPaletteReviewStatus(`正在保存 ${code}...`);
     const regionCanvas = createCanvasFromRegion(paletteReviewState.sourceCanvas, selection);
     const localSwatch = buildManualSelectionSwatch(regionCanvas);
+    const learnedGlyphCount = learnGlyphTemplatesFromCode(regionCanvas, localSwatch, code);
     const rgb = paletteReviewState.manualRgb ? [...paletteReviewState.manualRgb] : localSwatch.rgb;
     mergePaletteEntries(
       [
@@ -6691,8 +6812,8 @@ function savePaletteSelectionManually() {
     }
     setPaletteReviewStatus(
       shouldReplaceActive
-        ? `已覆盖当前色块为 ${code}，并同步更新右侧列表。`
-        : `已新增色块 ${code}，并加入右侧列表。`,
+        ? `已覆盖当前色块为 ${code}，并同步更新右侧列表。${learnedGlyphCount ? ` 已学习 ${learnedGlyphCount} 个真实字形。` : ""}`
+        : `已新增色块 ${code}，并加入右侧列表。${learnedGlyphCount ? ` 已学习 ${learnedGlyphCount} 个真实字形。` : ""}`,
     );
     saveStateToStorage();
     renderPaletteReview();
