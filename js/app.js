@@ -2334,17 +2334,18 @@ function renderPaletteReviewDetail() {
 }
 
 function renderPaletteReviewDetailV2() {
-  if (!paletteReviewDetailCanvas || !paletteReviewDetailCtx) {
-    return;
-  }
+  if (!paletteReviewDetailCanvas || !paletteReviewDetailCtx) {
+    return;
+  }
 
-  const canvasWidth = Math.max(
-    220,
-    Math.round(paletteReviewDetailCanvas.parentElement?.clientWidth || paletteReviewDetailCanvas.clientWidth || 220) - 4,
-  );
-  const canvasHeight = Math.max(132, Math.round(canvasWidth * 0.58));
-  ensureCanvasSize(paletteReviewDetailCanvas, canvasWidth, canvasHeight);
-  paletteReviewDetailCanvas.style.width = `${canvasWidth}px`;
+  const hostWidth = Math.round(
+    paletteReviewDetailCanvas.parentElement?.clientWidth || paletteReviewDetailCanvas.clientWidth || 220,
+  );
+  const compactPreview = hostWidth <= 360;
+  const canvasWidth = Math.max(196, Math.min(hostWidth - 4, compactPreview ? 280 : 360));
+  const canvasHeight = Math.max(124, Math.min(220, Math.round(canvasWidth * (compactPreview ? 0.62 : 0.52))));
+  ensureCanvasSize(paletteReviewDetailCanvas, canvasWidth, canvasHeight);
+  paletteReviewDetailCanvas.style.width = `${canvasWidth}px`;
   paletteReviewDetailCtx.clearRect(0, 0, canvasWidth, canvasHeight);
   paletteReviewDetailCtx.fillStyle = "#fffdf8";
   paletteReviewDetailCtx.fillRect(0, 0, canvasWidth, canvasHeight);
@@ -2368,13 +2369,13 @@ function renderPaletteReviewDetailV2() {
 
   const previewCanvas = createCanvasFromRegion(paletteReviewState.sourceCanvas, selection);
   const previewMaxWidth = Math.max(180, canvasWidth - 24);
-  const previewMaxHeight = Math.max(84, canvasHeight - 48);
+  const previewMaxHeight = Math.max(84, canvasHeight - 40);
   const scale = Math.min(previewMaxWidth / previewCanvas.width, previewMaxHeight / previewCanvas.height);
   const drawWidth = previewCanvas.width * scale;
   const drawHeight = previewCanvas.height * scale;
   const offsetX = (canvasWidth - drawWidth) / 2;
   const offsetY = 10 + (previewMaxHeight - drawHeight) / 2;
-  const footerY = canvasHeight - 14;
+  const footerY = canvasHeight - 12;
   paletteReviewState.detailDisplay = {
     selection: { ...selection },
     canvasWidth,
@@ -3192,42 +3193,46 @@ function injectEnhancementControls() {
                 <h4>当前选中色块</h4>
                 <p class="empty-text">选中后就在这里改色号、取真实底色、保存，不再跨屏来回跑。</p>
               </div>
-              <div class="palette-review-focus-layout">
-                <canvas id="paletteReviewDetailCanvas" aria-label="当前色块放大预览"></canvas>
-                <div class="palette-review-editor">
-                  <div class="palette-review-control-grid">
-                    <label class="field">
-                      <span>修正模式</span>
-                      <select id="paletteReviewModeSelect">
-                        <option value="color-first">颜色优先：手填色号 + 内部取色保存</option>
-                        <option value="ocr-first">色号优先：调用后端 OCR 重识别文字</option>
-                      </select>
-                    </label>
-                    <label class="field">
-                      <span>手动色号</span>
-                      <input id="paletteReviewCodeInput" type="text" maxlength="12" placeholder="例如 H9 / C20" list="paletteReviewCodeList" />
-                      <datalist id="paletteReviewCodeList"></datalist>
-                    </label>
-                  </div>
-                  <div class="palette-review-primary-actions">
-                    <button id="paletteReviewSaveBtn" type="button">按手填色号保存色卡</button>
-                    <button id="paletteReviewRetryBtn" class="ghost-btn" type="button">后端重识别文字</button>
-                  </div>
-                  <div class="palette-review-secondary-actions">
-                    <button id="paletteReviewDeleteBtn" class="ghost-btn" type="button">删除选中色块</button>
-                    <button id="paletteReviewClearBtn" class="ghost-btn" type="button">清除框选</button>
-                  </div>
-                </div>
-              </div>
-              <div class="field palette-review-color-panel">
-                <span>真实取色</span>
-                <p class="empty-text" id="paletteReviewColorValue">直接在放大预览上点真实像素，或点下面 5x5 像素板。保存时会优先使用你手选的颜色。</p>
-                <div id="paletteReviewPixelGrid" class="palette-pixel-grid"></div>
-                <div class="button-row">
-                  <button id="paletteReviewResetColorBtn" class="ghost-btn" type="button">清除手选颜色</button>
-                </div>
-              </div>
-            </div>
+              <div class="palette-review-focus-layout">
+                <div class="palette-review-preview-pane">
+                  <canvas id="paletteReviewDetailCanvas" aria-label="当前色块放大预览"></canvas>
+                </div>
+                <div class="palette-review-edit-stack">
+                  <div class="palette-review-editor">
+                    <div class="palette-review-control-grid">
+                      <label class="field">
+                        <span>修正模式</span>
+                        <select id="paletteReviewModeSelect">
+                          <option value="color-first">颜色优先：手填色号 + 内部取色保存</option>
+                          <option value="ocr-first">色号优先：调用后端 OCR 重识别文字</option>
+                        </select>
+                      </label>
+                      <label class="field">
+                        <span>手动色号</span>
+                        <input id="paletteReviewCodeInput" type="text" maxlength="12" placeholder="例如 H9 / C20" list="paletteReviewCodeList" />
+                        <datalist id="paletteReviewCodeList"></datalist>
+                      </label>
+                    </div>
+                    <div class="palette-review-primary-actions">
+                      <button id="paletteReviewSaveBtn" type="button">按手填色号保存色卡</button>
+                      <button id="paletteReviewRetryBtn" class="ghost-btn" type="button">后端重识别文字</button>
+                    </div>
+                    <div class="palette-review-secondary-actions">
+                      <button id="paletteReviewDeleteBtn" class="ghost-btn" type="button">删除选中色块</button>
+                      <button id="paletteReviewClearBtn" class="ghost-btn" type="button">清除框选</button>
+                    </div>
+                  </div>
+                  <div class="field palette-review-color-panel">
+                    <span>真实取色</span>
+                    <p class="empty-text" id="paletteReviewColorValue">直接在放大预览上点真实像素，或点下面 5x5 像素板。保存时会优先使用你手选的颜色。</p>
+                    <div id="paletteReviewPixelGrid" class="palette-pixel-grid"></div>
+                    <div class="button-row">
+                      <button id="paletteReviewResetColorBtn" class="ghost-btn" type="button">清除手选颜色</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
             <div class="summary-card palette-review-list-card">
               <div class="palette-review-card-head">
                 <h4>识别列表</h4>
