@@ -835,7 +835,7 @@ button:disabled { opacity: 0.4; cursor: default; }
 }
 
 @media (min-width: 641px) and (max-width: 960px) {
-  .palette-review-workzone { grid-template-columns: 1fr; }
+  .palette-review-workzone { grid-template-columns: minmax(0, 1.18fr) minmax(220px, 0.82fr); }
   .palette-review-focus-layout { grid-template-columns: minmax(220px, 0.9fr) minmax(0, 1.1fr); }
 }
 
