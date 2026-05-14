@@ -3215,7 +3215,10 @@ function injectEnhancementControls() {
                     </div>
                     <div class="palette-review-primary-actions">
                       <button id="paletteReviewSaveBtn" type="button">按手填色号保存色卡</button>
+                    </div>
+                    <div class="palette-review-assist-actions">
                       <button id="paletteReviewRetryBtn" class="ghost-btn" type="button">后端重识别文字</button>
+                      <button id="localOcrBtn" class="ghost-btn" type="button" title="跳过 Render 后端，直接使用浏览器本地 OCR 识别色号">本地离线识别</button>
                     </div>
                     <div class="palette-review-secondary-actions">
                       <button id="paletteReviewDeleteBtn" class="ghost-btn" type="button">删除选中色块</button>
@@ -3226,7 +3229,7 @@ function injectEnhancementControls() {
                     <span>真实取色</span>
                     <p class="empty-text" id="paletteReviewColorValue">直接在放大预览上点真实像素，或点下面 5x5 像素板。保存时会优先使用你手选的颜色。</p>
                     <div id="paletteReviewPixelGrid" class="palette-pixel-grid"></div>
-                    <div class="button-row">
+                    <div class="button-row palette-review-color-actions">
                       <button id="paletteReviewResetColorBtn" class="ghost-btn" type="button">清除手选颜色</button>
                     </div>
                   </div>
@@ -3278,17 +3281,6 @@ function injectEnhancementControls() {
     `;
     step2Panel.appendChild(paletteTools);
 
-    // Inject local OCR button next to existing buttons
-    const ocrBtnRow = paletteTools.querySelector('.button-row');
-    if (ocrBtnRow && !document.querySelector('#localOcrBtn')) {
-      const localBtn = document.createElement('button');
-      localBtn.id = 'localOcrBtn';
-      localBtn.className = 'ghost-btn';
-      localBtn.type = 'button';
-      localBtn.textContent = '本地离线识别';
-      localBtn.title = '跳过 Render 后端，直接使用浏览器本地 OCR 识别色号';
-      ocrBtnRow.appendChild(localBtn);
-    }
   }
 
   if (step3Panel && !document.querySelector("#sampleOverlayToggle")) {
